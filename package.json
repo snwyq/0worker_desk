@@ -82,7 +82,9 @@
     "cross-env": "^7.0.3",
     "electron": "^35.7.5",
     "electron-builder": "^26.8.1",
+    "@tailwindcss/postcss": "^4.2.4",
     "typescript": "^5.4.5",
+    "tailwindcss": "^4.2.4",
     "vite": "^5.2.0",
     "vitest": "^1.6.0",
     "wait-on": "^7.2.0"
