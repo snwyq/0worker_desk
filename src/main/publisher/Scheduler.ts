@@ -20,7 +20,7 @@ export class PublishScheduler {
 
   constructor(private readonly repositories: AppDatabase) {}
 
-  start(intervalMs = 30_000) {
+  start(intervalMs = Number(this.repositories.settings.get('scheduler.intervalMs') ?? 30_000)) {
     if (this.timer) {
       return this.getStatus();
     }

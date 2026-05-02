@@ -184,6 +184,16 @@ form button,
   padding: 3px 8px;
 }
 
+.mini-tag {
+  display: inline-block;
+  border: 1px solid rgba(152, 106, 30, 0.22);
+  border-radius: 999px;
+  color: #7a5314;
+  font-size: 11px;
+  margin-left: 8px;
+  padding: 2px 6px;
+}
+
 h1,
 h2,
 p {
@@ -255,7 +265,7 @@ h1 {
 
 .table-row {
   display: grid;
-  grid-template-columns: 1.1fr 0.9fr 0.9fr 1.4fr 0.7fr;
+  grid-template-columns: 1fr 0.8fr 0.8fr 0.9fr 1.2fr 1.2fr 0.8fr;
   gap: 12px;
   align-items: center;
   min-height: 44px;
@@ -268,7 +278,220 @@ h1 {
 }
 
 .table-row.queue {
-  grid-template-columns: 1fr 0.8fr 1.1fr 1.7fr 0.7fr;
+  grid-template-columns: 0.35fr 1fr 0.8fr 0.8fr 1.1fr 1.5fr 1.2fr;
+}
+
+.table-row.content {
+  grid-template-columns: 1.7fr 0.8fr 1.1fr 0.8fr;
+}
+
+.table-row.runs {
+  grid-template-columns: 0.8fr 1fr 0.8fr 1.1fr 1.8fr;
+}
+
+.quick-stats,
+.guide-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.quick-stats article,
+.guide-grid article,
+.guide-block {
+  border: 1px solid rgba(23, 33, 27, 0.12);
+  border-radius: 8px;
+  background: #fffdf6;
+  padding: 16px;
+}
+
+.docs-grid {
+  align-items: start;
+}
+
+.doc-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #30433a;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.quick-stats span {
+  color: #5d6b64;
+  display: block;
+  font-size: 13px;
+}
+
+.quick-stats strong {
+  display: block;
+  font-size: 30px;
+  margin-top: 8px;
+}
+
+.handoff-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.handoff-grid section {
+  border: 1px solid rgba(23, 33, 27, 0.12);
+  border-radius: 8px;
+  background: #fffdf6;
+  padding: 16px;
+}
+
+.handoff-grid h3 {
+  margin: 0 0 12px;
+}
+
+.handoff-grid article {
+  display: grid;
+  grid-template-columns: 130px minmax(120px, 0.8fr) minmax(160px, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px 0;
+  border-top: 1px solid rgba(23, 33, 27, 0.08);
+}
+
+.handoff-grid article:first-of-type {
+  border-top: 0;
+}
+
+.handoff-grid strong,
+.handoff-grid p {
+  min-width: 0;
+  margin: 0;
+}
+
+.workflow-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.filter-row select {
+  min-width: 150px;
+}
+
+.selection-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 16px 0 0;
+}
+
+.task-error-row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 12px;
+  padding: 8px 12px 14px;
+  border-top: 1px dashed rgba(23, 33, 27, 0.12);
+  color: #7a5314;
+  background: rgba(152, 106, 30, 0.06);
+}
+
+.task-detail-row {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 14px;
+  padding: 12px;
+  border-top: 1px solid rgba(23, 33, 27, 0.1);
+  background: rgba(255, 253, 246, 0.72);
+}
+
+.task-detail-row > div:first-child {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  color: #30433a;
+}
+
+.run-mini-list {
+  display: grid;
+  gap: 8px;
+}
+
+.run-mini-list article {
+  display: grid;
+  grid-template-columns: 110px 170px minmax(160px, 1fr) minmax(120px, 0.8fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.run-mini-list code {
+  overflow: hidden;
+  color: #5d6b64;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.form-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid rgba(32, 82, 69, 0.18);
+  border-radius: 6px;
+  background: rgba(32, 82, 69, 0.08);
+  color: #205245;
+  padding: 10px 12px;
+}
+
+.workflow-strip span {
+  border: 1px solid rgba(32, 82, 69, 0.18);
+  border-radius: 999px;
+  background: rgba(32, 82, 69, 0.08);
+  color: #205245;
+  padding: 8px 12px;
+}
+
+.guide-block {
+  margin-top: 22px;
+}
+
+.guide-block h3,
+.guide-grid h3 {
+  margin: 0 0 8px;
+}
+
+.guide-block p,
+.guide-grid p {
+  color: #5d6b64;
+}
+
+.settings-table {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.setting-row {
+  display: grid;
+  grid-template-columns: 240px 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.setting-row code {
+  color: #30433a;
+  font-size: 12px;
 }
 
 .table-head {

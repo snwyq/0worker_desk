@@ -1,4 +1,5 @@
 import type { Account } from '../../shared/types.js';
+import type { AppDatabase } from '../db/database.js';
 
 export interface AdsPowerBrowserInfo {
   cdpEndpoint: string;
@@ -17,8 +18,8 @@ interface AdsPowerStartResponse {
   };
 }
 
-export async function startAdsPowerBrowser(account: Account): Promise<AdsPowerBrowserInfo> {
-  const apiKey = process.env.ADSPOWER_API_KEY;
+export async function startAdsPowerBrowser(account: Account, repositories?: AppDatabase): Promise<AdsPowerBrowserInfo> {
+  const apiKey = repositories?.settings.get('adspower.apiKey') || process.env.ADSPOWER_API_KEY;
   if (!apiKey) {
     throw new Error('Missing ADSPOWER_API_KEY environment variable');
   }

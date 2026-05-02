@@ -1,15 +1,18 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron';
 import http from 'node:http';
-import type { ConnectionTestResult, CreateAccountInput, CreatePostInput, DeletePostResult, PublishAttemptResult } from '../../shared/types.js';
+import type { ConnectionTestResult, CreateAccountInput, CreateContentItemInput, CreatePostInput, DeletePostResult, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateDistributionTaskInput } from '../../shared/types.js';
 import { startAdsPowerBrowser } from '../browser/AdsPowerApi.js';
 import { createConnectorForAccount } from '../browser/BrowserConnectorFactory.js';
 import { inspectFirstPage } from '../browser/RawCdpClient.js';
 import type { AppDatabase } from '../db/database.js';
+import { readHelpDocs } from '../docs/HelpDocsService.js';
 import { shouldPublishPost } from '../publisher/PublishWorker.js';
 import { publishPostNow } from '../publisher/PublishService.js';
 import { fillWeiboDraft } from '../publisher/RawWeiboPublisher.js';
 import { PublishScheduler } from '../publisher/Scheduler.js';
 import { WeiboPublisher } from '../publisher/WeiboPublisher.js';
+import { listPlatformCapabilities } from '../platforms/registry.js';
+import { checkForUpdates, readUpdateConfig } from '../updater/UpdateService.js';
 
 async function selectMediaFiles() {
   const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
@@ -34,10 +37,15 @@ async function testAccountConnection(repositories: AppDatabase, accountId: numbe
   }
 
   try {
+    const timeoutMs = Number(repositories.settings.get('browser.connectionTimeoutMs') ?? 12_000);
     const timeout = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Connection test timed out after 12 seconds')), 12_000);
+      setTimeout(() => reject(new Error(`Connection test timed out after ${Math.round(timeoutMs / 1000)} seconds`)), timeoutMs);
     });
-    const result = await Promise.race([readConnectionStatus(account), timeout]);
+    const result = await Promise.race([readConnectionStatus(repositories, account), timeout]);
+    repositories.accounts.updateHealth(account.id, {
+      status: 'active',
+      healthMessage: `Connected to ${account.name}${result.currentUrl ? ` (${result.currentUrl})` : ''}`,
+    });
 
     return {
       ok: true,
@@ -45,16 +53,25 @@ async function testAccountConnection(repositories: AppDatabase, accountId: numbe
       currentUrl: result.currentUrl,
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    repositories.accounts.updateHealth(account.id, {
+      status: 'needs_manual_action',
+      healthMessage: message,
+      manualActionReason: 'Connection test failed',
+    });
     return {
       ok: false,
-      message: error instanceof Error ? error.message : String(error),
+      message,
     };
   }
 }
 
-async function readConnectionStatus(account: { browserMode: string; providerProfileId: string; debuggingPort: number | null; wsEndpoint: string }) {
+async function readConnectionStatus(
+  repositories: AppDatabase,
+  account: { browserMode: string; providerProfileId: string; debuggingPort: number | null; wsEndpoint: string },
+) {
   if (account.browserMode === 'adspower') {
-    const apiKey = process.env.ADSPOWER_API_KEY;
+    const apiKey = repositories.settings.get('adspower.apiKey') || process.env.ADSPOWER_API_KEY;
     if (!apiKey) {
       throw new Error('Missing ADSPOWER_API_KEY environment variable');
     }
@@ -106,6 +123,7 @@ async function readDebugPortStatus(port: number) {
 }
 
 async function attemptPublishPost(repositories: AppDatabase, postId: number): Promise<PublishAttemptResult> {
+  const startedAt = new Date().toISOString();
   const post = repositories.posts.findById(postId);
   if (!post) {
     return { ok: false, message: `Post ${postId} was not found` };
@@ -130,17 +148,19 @@ async function attemptPublishPost(repositories: AppDatabase, postId: number): Pr
     repositories.posts.updateStatus(post.id, 'publishing');
 
     if (account.browserMode === 'adspower') {
-      const browserInfo = await startAdsPowerBrowser(account);
+      const browserInfo = await startAdsPowerBrowser(account, repositories);
       const page = await inspectFirstPage(browserInfo.cdpEndpoint);
       if (page.url.includes('newlogin') || page.url.includes('passport.weibo')) {
         const message = `Weibo login page detected. Please log in manually first: ${page.url}`;
         repositories.posts.updateStatus(post.id, 'needs_manual_action', message);
+        recordRunForPost(repositories, post.id, 'needs_manual_action', message, startedAt);
         return { ok: false, message, status: 'needs_manual_action' };
       }
       const draft = await fillWeiboDraft(browserInfo, post);
       const message = `${draft.message}. Current page: ${draft.title || 'untitled'} ${draft.url}. Send disabled: ${draft.sendButtonDisabled}`;
       const status = draft.ok ? 'draft' : 'failed';
       repositories.posts.updateStatus(post.id, status, message);
+      recordRunForPost(repositories, post.id, status, message, startedAt);
       return { ok: draft.ok, message, status };
     }
 
@@ -149,6 +169,7 @@ async function attemptPublishPost(repositories: AppDatabase, postId: number): Pr
     const result = await new WeiboPublisher().publish(session.browser, post);
     await session.browser.close();
     repositories.posts.updateStatus(post.id, result.status, result.message, result.screenshotPath ?? '');
+    recordRunForPost(repositories, post.id, result.status, result.message, startedAt, result.screenshotPath ?? '');
 
     return {
       ok: result.status === 'published',
@@ -158,6 +179,7 @@ async function attemptPublishPost(repositories: AppDatabase, postId: number): Pr
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     repositories.posts.updateStatus(post.id, 'failed', message);
+    recordRunForPost(repositories, post.id, 'failed', message, startedAt);
     return { ok: false, message, status: 'failed' };
   }
 }
@@ -170,9 +192,40 @@ function deletePost(repositories: AppDatabase, postId: number): DeletePostResult
   };
 }
 
+function findDistributionTaskForPost(repositories: AppDatabase, postId: number) {
+  return repositories.distributionTasks.list().find((task) => task.legacyPostId === postId) ?? null;
+}
+
+function recordRunForPost(
+  repositories: AppDatabase,
+  postId: number,
+  status: PublishAttemptResult['status'] | 'failed',
+  message: string,
+  startedAt: string,
+  screenshotPath = '',
+) {
+  const task = findDistributionTaskForPost(repositories, postId);
+  if (!task) {
+    return;
+  }
+
+  repositories.distributionTasks.updateStatus(task.id, status ?? 'failed', status === 'failed' ? message : '');
+  repositories.publishRuns.create({
+    taskId: task.id,
+    accountId: task.accountId,
+    platform: task.platform,
+    status: status ?? 'failed',
+    message,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    screenshotPath,
+  });
+}
+
 export function registerIpcHandlers(repositories: AppDatabase, scheduler: PublishScheduler) {
   ipcMain.handle('accounts:list', () => repositories.accounts.list());
   ipcMain.handle('accounts:create', (_event, input: CreateAccountInput) => repositories.accounts.create(input));
+  ipcMain.handle('accounts:update', (_event, id: number, input: UpdateAccountInput) => repositories.accounts.update(id, input));
   ipcMain.handle('posts:list', () => repositories.posts.list());
   ipcMain.handle('posts:create', (_event, input: CreatePostInput) => repositories.posts.create(input));
   ipcMain.handle('posts:delete', (_event, postId: number) => deletePost(repositories, postId));
@@ -184,6 +237,34 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   ipcMain.handle('scheduler:start', () => scheduler.start());
   ipcMain.handle('scheduler:stop', () => scheduler.stop());
   ipcMain.handle('scheduler:status', () => scheduler.getStatus());
+  ipcMain.handle('settings:list', () => repositories.settings.list());
+  ipcMain.handle('settings:set', (_event, key: string, value: string) => {
+    repositories.settings.set(key, value);
+    return repositories.settings.list();
+  });
+  ipcMain.handle('platforms:list', () => repositories.platforms.list());
+  ipcMain.handle('contents:list', () => repositories.contentItems.list());
+  ipcMain.handle('contents:create', (_event, input: CreateContentItemInput) => repositories.contentItems.create(input));
+  ipcMain.handle('contents:update', (_event, id: number, input: UpdateContentItemInput) => repositories.contentItems.update(id, input));
+  ipcMain.handle('contents:delete', (_event, id: number) => ({
+    ok: repositories.contentItems.delete(id),
+  }));
+  ipcMain.handle('contents:versions', (_event, id: number) => repositories.contentItems.listVersions(id));
+  ipcMain.handle('distributionTasks:list', () => repositories.distributionTasks.list());
+  ipcMain.handle('distributionTasks:update', (_event, id: number, input: UpdateDistributionTaskInput) => repositories.distributionTasks.update(id, input));
+  ipcMain.handle('distributionTasks:retry', (_event, id: number) => repositories.distributionTasks.retry(id));
+  ipcMain.handle('distributionTasks:cancel', (_event, id: number) => repositories.distributionTasks.cancel(id));
+  ipcMain.handle('distributionTasks:retryMany', (_event, ids: number[]) => repositories.distributionTasks.retryMany(ids));
+  ipcMain.handle('distributionTasks:cancelMany', (_event, ids: number[]) => repositories.distributionTasks.cancelMany(ids));
+  ipcMain.handle('platformCapabilities:list', () => listPlatformCapabilities());
+  ipcMain.handle('publishRuns:list', (_event, taskId?: number) => (
+    taskId ? repositories.publishRuns.listByTask(taskId) : repositories.publishRuns.list()
+  ));
+  ipcMain.handle('updates:status', () => ({
+    config: readUpdateConfig(repositories),
+  }));
+  ipcMain.handle('updates:check', () => checkForUpdates(repositories));
+  ipcMain.handle('helpDocs:get', () => readHelpDocs(process.cwd()));
 }
 
 function readBody(request: http.IncomingMessage): Promise<unknown> {
@@ -200,12 +281,16 @@ function readBody(request: http.IncomingMessage): Promise<unknown> {
 }
 
 function getAllowedOrigin(request: http.IncomingMessage) {
+  const configuredOrigins = currentHttpRepositories?.settings.get('http.allowedOrigins')
+    ?.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean) ?? ['http://127.0.0.1:5173', 'http://localhost:5173'];
   const origin = request.headers.origin;
-  if (origin === 'http://127.0.0.1:5173' || origin === 'http://localhost:5173') {
+  if (origin && configuredOrigins.includes(origin)) {
     return origin;
   }
 
-  return 'http://127.0.0.1:5173';
+  return configuredOrigins[0] ?? 'http://127.0.0.1:5173';
 }
 
 function sendJson(request: http.IncomingMessage, response: http.ServerResponse, statusCode: number, payload: unknown) {
@@ -218,7 +303,10 @@ function sendJson(request: http.IncomingMessage, response: http.ServerResponse, 
   response.end(JSON.stringify(payload));
 }
 
-export function startHttpApi(repositories: AppDatabase, scheduler: PublishScheduler, port = 5183) {
+let currentHttpRepositories: AppDatabase | null = null;
+
+export function startHttpApi(repositories: AppDatabase, scheduler: PublishScheduler, port = Number(repositories.settings.get('http.port') ?? 5183)) {
+  currentHttpRepositories = repositories;
   const server = http.createServer(async (request, response) => {
     try {
       if (request.method === 'OPTIONS') {
@@ -234,6 +322,13 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
       if (request.method === 'POST' && request.url === '/accounts') {
         const input = await readBody(request) as CreateAccountInput;
         sendJson(request, response, 200, repositories.accounts.create(input));
+        return;
+      }
+
+      const accountMatch = request.url?.match(/^\/accounts\/(\d+)$/);
+      if (request.method === 'PATCH' && accountMatch) {
+        const input = await readBody(request) as UpdateAccountInput;
+        sendJson(request, response, 200, repositories.accounts.update(Number(accountMatch[1]), input));
         return;
       }
 
@@ -284,6 +379,116 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
 
       if (request.method === 'GET' && request.url === '/scheduler/status') {
         sendJson(request, response, 200, scheduler.getStatus());
+        return;
+      }
+
+      if (request.method === 'GET' && request.url === '/settings') {
+        sendJson(request, response, 200, repositories.settings.list());
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/settings') {
+        const input = await readBody(request) as { key: string; value: string };
+        repositories.settings.set(input.key, input.value);
+        sendJson(request, response, 200, repositories.settings.list());
+        return;
+      }
+
+      if (request.method === 'GET' && request.url === '/platforms') {
+        sendJson(request, response, 200, repositories.platforms.list());
+        return;
+      }
+
+      if (request.method === 'GET' && request.url === '/platform-capabilities') {
+        sendJson(request, response, 200, listPlatformCapabilities());
+        return;
+      }
+
+      if (request.method === 'GET' && request.url === '/distribution-tasks') {
+        sendJson(request, response, 200, repositories.distributionTasks.list());
+        return;
+      }
+
+      const distributionTaskMatch = request.url?.match(/^\/distribution-tasks\/(\d+)$/);
+      if (request.method === 'PATCH' && distributionTaskMatch) {
+        const input = await readBody(request) as UpdateDistributionTaskInput;
+        sendJson(request, response, 200, repositories.distributionTasks.update(Number(distributionTaskMatch[1]), input));
+        return;
+      }
+
+      const distributionRetryMatch = request.url?.match(/^\/distribution-tasks\/(\d+)\/retry$/);
+      if (request.method === 'POST' && distributionRetryMatch) {
+        sendJson(request, response, 200, repositories.distributionTasks.retry(Number(distributionRetryMatch[1])));
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/distribution-tasks/retry-many') {
+        const input = await readBody(request) as { ids: number[] };
+        sendJson(request, response, 200, repositories.distributionTasks.retryMany(input.ids));
+        return;
+      }
+
+      const distributionCancelMatch = request.url?.match(/^\/distribution-tasks\/(\d+)\/cancel$/);
+      if (request.method === 'POST' && distributionCancelMatch) {
+        sendJson(request, response, 200, repositories.distributionTasks.cancel(Number(distributionCancelMatch[1])));
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/distribution-tasks/cancel-many') {
+        const input = await readBody(request) as { ids: number[] };
+        sendJson(request, response, 200, repositories.distributionTasks.cancelMany(input.ids));
+        return;
+      }
+
+      const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+
+      if (request.method === 'GET' && requestUrl.pathname === '/publish-runs') {
+        const taskId = requestUrl.searchParams.get('taskId');
+        sendJson(request, response, 200, taskId ? repositories.publishRuns.listByTask(Number(taskId)) : repositories.publishRuns.list());
+        return;
+      }
+
+      if (request.method === 'GET' && request.url === '/updates/status') {
+        sendJson(request, response, 200, { config: readUpdateConfig(repositories) });
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/updates/check') {
+        sendJson(request, response, 200, await checkForUpdates(repositories));
+        return;
+      }
+
+      if (request.method === 'GET' && request.url === '/help-docs') {
+        sendJson(request, response, 200, readHelpDocs(process.cwd()));
+        return;
+      }
+
+      if (request.method === 'GET' && request.url === '/contents') {
+        sendJson(request, response, 200, repositories.contentItems.list());
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/contents') {
+        const input = await readBody(request) as CreateContentItemInput;
+        sendJson(request, response, 200, repositories.contentItems.create(input));
+        return;
+      }
+
+      const contentMatch = request.url?.match(/^\/contents\/(\d+)$/);
+      const contentVersionsMatch = request.url?.match(/^\/contents\/(\d+)\/versions$/);
+      if (request.method === 'GET' && contentVersionsMatch) {
+        sendJson(request, response, 200, repositories.contentItems.listVersions(Number(contentVersionsMatch[1])));
+        return;
+      }
+
+      if (request.method === 'PATCH' && contentMatch) {
+        const input = await readBody(request) as UpdateContentItemInput;
+        sendJson(request, response, 200, repositories.contentItems.update(Number(contentMatch[1]), input));
+        return;
+      }
+
+      if (request.method === 'DELETE' && contentMatch) {
+        sendJson(request, response, 200, { ok: repositories.contentItems.delete(Number(contentMatch[1])) });
         return;
       }
 

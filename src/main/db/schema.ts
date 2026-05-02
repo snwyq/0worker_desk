@@ -1,4 +1,20 @@
 export const schemaSql = `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id TEXT PRIMARY KEY,
+  appliedAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS platforms (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  sortOrder INTEGER NOT NULL DEFAULT 0,
+  configJson TEXT NOT NULL DEFAULT '{}',
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS accounts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -8,6 +24,9 @@ CREATE TABLE IF NOT EXISTS accounts (
   wsEndpoint TEXT NOT NULL DEFAULT '',
   debuggingPort INTEGER,
   status TEXT NOT NULL DEFAULT 'active',
+  healthMessage TEXT NOT NULL DEFAULT '',
+  lastCheckedAt TEXT NOT NULL DEFAULT '',
+  manualActionReason TEXT NOT NULL DEFAULT '',
   notes TEXT NOT NULL DEFAULT '',
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
@@ -43,4 +62,82 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  updatedAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS content_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual',
+  status TEXT NOT NULL DEFAULT 'draft',
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS content_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contentId INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual',
+  createdAt TEXT NOT NULL,
+  FOREIGN KEY (contentId) REFERENCES content_items(id)
+);
+
+CREATE TABLE IF NOT EXISTS media_assets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contentId INTEGER,
+  path TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  mimeType TEXT NOT NULL DEFAULT '',
+  sizeBytes INTEGER NOT NULL DEFAULT 0,
+  createdAt TEXT NOT NULL,
+  FOREIGN KEY (contentId) REFERENCES content_items(id)
+);
+
+CREATE TABLE IF NOT EXISTS distribution_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contentId INTEGER NOT NULL,
+  accountId INTEGER NOT NULL,
+  platform TEXT NOT NULL,
+  legacyPostId INTEGER,
+  scheduledAt TEXT NOT NULL,
+  status TEXT NOT NULL,
+  platformPayload TEXT NOT NULL DEFAULT '{}',
+  lastError TEXT NOT NULL DEFAULT '',
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (contentId) REFERENCES content_items(id),
+  FOREIGN KEY (accountId) REFERENCES accounts(id),
+  FOREIGN KEY (legacyPostId) REFERENCES posts(id)
+);
+
+CREATE TABLE IF NOT EXISTS publish_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  taskId INTEGER NOT NULL,
+  accountId INTEGER NOT NULL,
+  platform TEXT NOT NULL,
+  status TEXT NOT NULL,
+  message TEXT NOT NULL DEFAULT '',
+  startedAt TEXT NOT NULL,
+  finishedAt TEXT NOT NULL,
+  screenshotPath TEXT NOT NULL DEFAULT '',
+  createdAt TEXT NOT NULL,
+  FOREIGN KEY (taskId) REFERENCES distribution_tasks(id),
+  FOREIGN KEY (accountId) REFERENCES accounts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_platform_status ON accounts(platform, status);
+CREATE INDEX IF NOT EXISTS idx_posts_status_scheduled ON posts(status, scheduledAt);
+CREATE INDEX IF NOT EXISTS idx_distribution_tasks_status_scheduled ON distribution_tasks(status, scheduledAt);
+CREATE INDEX IF NOT EXISTS idx_distribution_tasks_account_status ON distribution_tasks(accountId, status);
+CREATE INDEX IF NOT EXISTS idx_distribution_tasks_legacy_post ON distribution_tasks(legacyPostId);
+CREATE INDEX IF NOT EXISTS idx_publish_runs_task_created ON publish_runs(taskId, createdAt);
+CREATE INDEX IF NOT EXISTS idx_publish_runs_platform_status ON publish_runs(platform, status);
 `;

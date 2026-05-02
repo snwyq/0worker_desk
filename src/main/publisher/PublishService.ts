@@ -9,6 +9,7 @@ interface PublishOptions {
 }
 
 export async function publishPostNow(repositories: AppDatabase, postId: number, options: PublishOptions = {}): Promise<PublishNowResult> {
+  const startedAt = new Date().toISOString();
   const post = repositories.posts.findById(postId);
   if (!post) {
     return { ok: false, message: `Post ${postId} was not found` };
@@ -37,24 +38,47 @@ export async function publishPostNow(repositories: AppDatabase, postId: number, 
 
   try {
     repositories.posts.updateStatus(post.id, 'publishing');
-    const browserInfo = await startAdsPowerBrowser(account);
+    const browserInfo = await startAdsPowerBrowser(account, repositories);
     const draft = await fillWeiboDraft(browserInfo, post);
     if (!draft.ok) {
       repositories.posts.updateStatus(post.id, 'failed', draft.message);
+      recordRun(repositories, post.id, 'failed', draft.message, startedAt);
       return { ok: false, message: draft.message, status: 'failed' };
     }
 
     const result = await publishWeiboDraft(browserInfo);
     if (!result.ok) {
       repositories.posts.updateStatus(post.id, 'failed', result.message);
+      recordRun(repositories, post.id, 'failed', result.message, startedAt);
       return { ok: false, message: result.message, status: 'failed' };
     }
 
     repositories.posts.updateStatus(post.id, 'published', result.message);
+    recordRun(repositories, post.id, 'published', result.message, startedAt);
     return { ok: true, message: result.message, status: 'published' };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     repositories.posts.updateStatus(post.id, 'failed', message);
+    recordRun(repositories, post.id, 'failed', message, startedAt);
     return { ok: false, message, status: 'failed' };
   }
+}
+
+function recordRun(repositories: AppDatabase, postId: number, status: NonNullable<PublishNowResult['status']>, message: string, startedAt: string) {
+  const task = repositories.distributionTasks.list().find((item) => item.legacyPostId === postId);
+  if (!task) {
+    return;
+  }
+
+  repositories.distributionTasks.updateStatus(task.id, status, status === 'failed' ? message : '');
+  repositories.publishRuns.create({
+    taskId: task.id,
+    accountId: task.accountId,
+    platform: task.platform,
+    status,
+    message,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    screenshotPath: '',
+  });
 }
