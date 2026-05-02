@@ -1,6 +1,6 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron';
+import electron from 'electron';
 import http from 'node:http';
-import type { ConnectionTestResult, CreateAccountInput, CreateContentItemInput, CreatePostInput, DeletePostResult, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateDistributionTaskInput } from '../../shared/types.js';
+import type { ConnectionTestResult, CreateAccountInput, CreateContentItemInput, CreatePostInput, DeleteAccountResult, DeletePostResult, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateDistributionTaskInput } from '../../shared/types.js';
 import { startAdsPowerBrowser } from '../browser/AdsPowerApi.js';
 import { createConnectorForAccount } from '../browser/BrowserConnectorFactory.js';
 import { inspectFirstPage } from '../browser/RawCdpClient.js';
@@ -13,6 +13,8 @@ import { PublishScheduler } from '../publisher/Scheduler.js';
 import { WeiboPublisher } from '../publisher/WeiboPublisher.js';
 import { listPlatformCapabilities } from '../platforms/registry.js';
 import { checkForUpdates, readUpdateConfig } from '../updater/UpdateService.js';
+
+const { BrowserWindow, dialog, ipcMain } = electron;
 
 async function selectMediaFiles() {
   const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
@@ -71,6 +73,9 @@ async function readConnectionStatus(
   account: { browserMode: string; providerProfileId: string; debuggingPort: number | null; wsEndpoint: string },
 ) {
   if (account.browserMode === 'adspower') {
+    if (!account.providerProfileId.trim()) {
+      throw new Error('Missing AdsPower user_id');
+    }
     const apiKey = repositories.settings.get('adspower.apiKey') || process.env.ADSPOWER_API_KEY;
     if (!apiKey) {
       throw new Error('Missing ADSPOWER_API_KEY environment variable');
@@ -78,9 +83,9 @@ async function readConnectionStatus(
 
     const url = new URL('http://127.0.0.1:50325/api/v1/browser/start');
     url.searchParams.set('user_id', account.providerProfileId);
-    const response = await fetch(url, {
+    const response = await fetchWithConnectionMessage(url, {
       headers: { Authorization: `Bearer ${apiKey}` },
-    });
+    }, 'Unable to connect to AdsPower Local API at 127.0.0.1:50325. Please start AdsPower and enable the local API service.');
     const body = await response.json() as { code: number; msg?: string; data?: { debug_port?: string } };
     if (body.code !== 0) {
       throw new Error(`AdsPower start failed: ${body.msg ?? body.code}`);
@@ -110,16 +115,35 @@ async function readConnectionStatus(
 }
 
 async function readDebugPortStatus(port: number) {
-  const versionResponse = await fetch(`http://127.0.0.1:${port}/json/version`);
+  const versionResponse = await fetchWithConnectionMessage(
+    `http://127.0.0.1:${port}/json/version`,
+    undefined,
+    `Unable to connect to Chrome debugging port ${port}. Please start the browser with remote debugging enabled, or update the account debugging port.`,
+  );
   if (!versionResponse.ok) {
     throw new Error(`Unable to read Chrome debug status from port ${port}`);
   }
 
-  const pagesResponse = await fetch(`http://127.0.0.1:${port}/json`);
+  const pagesResponse = await fetchWithConnectionMessage(
+    `http://127.0.0.1:${port}/json`,
+    undefined,
+    `Unable to list Chrome pages from debugging port ${port}. Please confirm the browser is still running.`,
+  );
   const pages = pagesResponse.ok ? await pagesResponse.json() as Array<{ url?: string }> : [];
   return {
     currentUrl: pages[0]?.url ?? `debug-port:${port}`,
   };
+}
+
+async function fetchWithConnectionMessage(input: string | URL, init: RequestInit | undefined, message: string) {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    const detail = error instanceof Error && error.message && error.message !== 'fetch failed'
+      ? ` (${error.message})`
+      : '';
+    throw new Error(`${message}${detail}`);
+  }
 }
 
 async function attemptPublishPost(repositories: AppDatabase, postId: number): Promise<PublishAttemptResult> {
@@ -192,6 +216,14 @@ function deletePost(repositories: AppDatabase, postId: number): DeletePostResult
   };
 }
 
+function deleteAccount(repositories: AppDatabase, accountId: number): DeleteAccountResult {
+  const deleted = repositories.accounts.delete(accountId);
+  return {
+    ok: deleted,
+    message: deleted ? `Account ${accountId} was deleted` : `Account ${accountId} was not found or could not be deleted`,
+  };
+}
+
 function findDistributionTaskForPost(repositories: AppDatabase, postId: number) {
   return repositories.distributionTasks.list().find((task) => task.legacyPostId === postId) ?? null;
 }
@@ -226,6 +258,7 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   ipcMain.handle('accounts:list', () => repositories.accounts.list());
   ipcMain.handle('accounts:create', (_event, input: CreateAccountInput) => repositories.accounts.create(input));
   ipcMain.handle('accounts:update', (_event, id: number, input: UpdateAccountInput) => repositories.accounts.update(id, input));
+  ipcMain.handle('accounts:delete', (_event, accountId: number) => deleteAccount(repositories, accountId));
   ipcMain.handle('posts:list', () => repositories.posts.list());
   ipcMain.handle('posts:create', (_event, input: CreatePostInput) => repositories.posts.create(input));
   ipcMain.handle('posts:delete', (_event, postId: number) => deletePost(repositories, postId));
@@ -284,9 +317,9 @@ function getAllowedOrigin(request: http.IncomingMessage) {
   const configuredOrigins = currentHttpRepositories?.settings.get('http.allowedOrigins')
     ?.split(',')
     .map((origin) => origin.trim())
-    .filter(Boolean) ?? ['http://127.0.0.1:5173', 'http://localhost:5173'];
+    .filter(Boolean) ?? ['http://127.0.0.1:5173', 'http://localhost:5173', 'null'];
   const origin = request.headers.origin;
-  if (origin && configuredOrigins.includes(origin)) {
+  if (origin && (configuredOrigins.includes(origin) || (origin === 'null' && !configuredOrigins.includes('null')))) {
     return origin;
   }
 
@@ -298,7 +331,7 @@ function sendJson(request: http.IncomingMessage, response: http.ServerResponse, 
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': getAllowedOrigin(request),
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
   });
   response.end(JSON.stringify(payload));
 }
@@ -329,6 +362,11 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
       if (request.method === 'PATCH' && accountMatch) {
         const input = await readBody(request) as UpdateAccountInput;
         sendJson(request, response, 200, repositories.accounts.update(Number(accountMatch[1]), input));
+        return;
+      }
+
+      if (request.method === 'DELETE' && accountMatch) {
+        sendJson(request, response, 200, deleteAccount(repositories, Number(accountMatch[1])));
         return;
       }
 

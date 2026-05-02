@@ -1,4 +1,4 @@
-import type { Account, AppSetting, ConnectionTestResult, ContentItem, CreateAccountInput, CreateContentItemInput, CreatePostInput, DeletePostResult, DistributionTask, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateDistributionTaskInput } from '../shared/types';
+import type { Account, AppSetting, ConnectionTestResult, ContentItem, CreateAccountInput, CreateContentItemInput, CreatePostInput, DeleteAccountResult, DeletePostResult, DistributionTask, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateDistributionTaskInput } from '../shared/types';
 
 declare global {
   interface Window {
@@ -7,6 +7,7 @@ declare global {
         list: () => Promise<Account[]>;
         create: (input: CreateAccountInput) => Promise<Account>;
         update: (id: number, input: UpdateAccountInput) => Promise<Account>;
+        delete: (id: number) => Promise<DeleteAccountResult>;
         testConnection: (accountId: number) => Promise<ConnectionTestResult>;
       };
       posts: {

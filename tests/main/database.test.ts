@@ -270,6 +270,49 @@ describe('database repositories', () => {
     expect(db.contentItems.findById(content.id)).toBeNull();
   });
 
+  test('deletes content items after they have queued tasks and run history', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'content delete account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+    });
+    const content = db.contentItems.create({
+      title: 'Queued title',
+      body: 'Queued body',
+      source: 'manual',
+      status: 'ready',
+    });
+    const task = db.distributionTasks.create({
+      contentId: content.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'Queued body' },
+    });
+    db.publishRuns.create({
+      taskId: task.id,
+      accountId: account.id,
+      platform: 'weibo',
+      status: 'failed',
+      message: 'queued content failed once',
+      startedAt: '2026-05-01T10:00:00.000Z',
+      finishedAt: '2026-05-01T10:00:01.000Z',
+      screenshotPath: '',
+    });
+
+    expect(db.contentItems.delete(content.id)).toBe(true);
+    expect(db.contentItems.findById(content.id)).toBeNull();
+    expect(db.distributionTasks.list()).not.toContainEqual(expect.objectContaining({ id: task.id }));
+    expect(db.publishRuns.list()).not.toContainEqual(expect.objectContaining({ taskId: task.id }));
+  });
+
   test('keeps version history for content revisions', async () => {
     const db = await createDatabase(':memory:');
     const content = db.contentItems.create({
@@ -398,6 +441,85 @@ describe('database repositories', () => {
       manualActionReason: 'Manual captcha resolution required',
     });
     expect(updated.lastCheckedAt).not.toBe('');
+  });
+
+  test('deletes accounts with post-linked tasks and run history', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'delete account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+    });
+    const otherAccount = db.accounts.create({
+      name: 'other account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9223,
+      status: 'active',
+      notes: '',
+    });
+    const post = db.posts.create({
+      accountId: account.id,
+      content: 'delete account post',
+      mediaPaths: [],
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+    });
+    const content = db.contentItems.create({
+      title: 'cross linked title',
+      body: 'cross linked body',
+      source: 'manual',
+      status: 'ready',
+    });
+    const task = db.distributionTasks.list().find((item) => item.legacyPostId === post.id);
+    if (!task) {
+      throw new Error('Expected task linked to the post');
+    }
+    const crossLinkedTask = db.distributionTasks.create({
+      contentId: content.id,
+      accountId: otherAccount.id,
+      platform: 'weibo',
+      legacyPostId: post.id,
+      scheduledAt: '2026-05-01T11:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'cross linked body' },
+    });
+    db.publishRuns.create({
+      taskId: task.id,
+      accountId: account.id,
+      platform: 'weibo',
+      status: 'failed',
+      message: 'delete account run',
+      startedAt: '2026-05-01T10:00:00.000Z',
+      finishedAt: '2026-05-01T10:00:01.000Z',
+      screenshotPath: '',
+    });
+    db.publishRuns.create({
+      taskId: crossLinkedTask.id,
+      accountId: otherAccount.id,
+      platform: 'weibo',
+      status: 'failed',
+      message: 'cross linked run',
+      startedAt: '2026-05-01T11:00:00.000Z',
+      finishedAt: '2026-05-01T11:00:01.000Z',
+      screenshotPath: '',
+    });
+
+    expect(db.accounts.delete(account.id)).toBe(true);
+    expect(db.accounts.findById(account.id)).toBeNull();
+    expect(db.accounts.findById(otherAccount.id)).not.toBeNull();
+    expect(db.posts.findById(post.id)).toBeNull();
+    expect(db.distributionTasks.list()).not.toContainEqual(expect.objectContaining({ id: task.id }));
+    expect(db.distributionTasks.list()).not.toContainEqual(expect.objectContaining({ id: crossLinkedTask.id }));
+    expect(db.publishRuns.list()).not.toContainEqual(expect.objectContaining({ taskId: task.id }));
+    expect(db.publishRuns.list()).not.toContainEqual(expect.objectContaining({ taskId: crossLinkedTask.id }));
   });
 
   test('deletes a post', async () => {

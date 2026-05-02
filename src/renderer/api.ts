@@ -1,4 +1,4 @@
-import type { Account, AppSetting, ConnectionTestResult, ContentItem, CreateAccountInput, CreateContentItemInput, CreatePostInput, DeletePostResult, DistributionTask, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateDistributionTaskInput } from '../shared/types';
+import type { Account, AppSetting, ConnectionTestResult, ContentItem, CreateAccountInput, CreateContentItemInput, CreatePostInput, DeleteAccountResult, DeletePostResult, DistributionTask, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateDistributionTaskInput } from '../shared/types';
 
 const httpBaseUrl = 'http://127.0.0.1:5183';
 
@@ -43,6 +43,14 @@ export const appApi = {
       return httpJson<Account>(`/accounts/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(input),
+      });
+    },
+    delete: (id: number): Promise<DeleteAccountResult> => {
+      if (window.weiboPublisher) {
+        return window.weiboPublisher.accounts.delete(id);
+      }
+      return httpJson<DeleteAccountResult>(`/accounts/${id}`, {
+        method: 'DELETE',
       });
     },
     testConnection: (accountId: number): Promise<ConnectionTestResult> => {

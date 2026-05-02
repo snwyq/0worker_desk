@@ -53,6 +53,48 @@ describe('http api', () => {
     expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
   });
 
+  test('allows CORS preflight for editing accounts', async () => {
+    const db = await createDatabase(':memory:');
+    const scheduler = new PublishScheduler(db);
+    const port = 51845;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/accounts/1`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'http://127.0.0.1:5173',
+        'Access-Control-Request-Method': 'PATCH',
+        'Access-Control-Request-Headers': 'content-type',
+      },
+    });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-methods')).toContain('PATCH');
+    expect(response.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5173');
+  });
+
+  test('allows account saves from file based renderer pages', async () => {
+    const db = await createDatabase(':memory:');
+    const scheduler = new PublishScheduler(db);
+    const port = 51849;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/accounts`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'null',
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type',
+      },
+    });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-methods')).toContain('POST');
+    expect(response.headers.get('access-control-allow-origin')).toBe('null');
+  });
+
   test('uses configured origins and exposes settings from the database', async () => {
     const db = await createDatabase(':memory:');
     db.settings.set('http.allowedOrigins', 'http://127.0.0.1:6200');
@@ -120,6 +162,83 @@ describe('http api', () => {
     expect(updated).toMatchObject({ id: created.id, title: 'Launch note updated', status: 'ready' });
     expect(list).toContainEqual(expect.objectContaining({ id: created.id }));
     expect(deleted.ok).toBe(true);
+  });
+
+  test('supports the main content-to-queue smoke workflow through the local api', async () => {
+    const db = await createDatabase(':memory:');
+    const scheduler = new PublishScheduler(db);
+    const port = 51844;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const contentResponse = await fetch(`${baseUrl}/contents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: '冒烟测试内容',
+        body: '保存内容后进入发布队列',
+        source: 'manual',
+        status: 'ready',
+      }),
+    });
+    const content = await contentResponse.json() as { id: number; body: string };
+
+    const accountResponse = await fetch(`${baseUrl}/accounts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: '冒烟微博账号',
+        platform: 'weibo',
+        browserMode: 'manual_port',
+        providerProfileId: '',
+        wsEndpoint: '',
+        debuggingPort: 9222,
+        status: 'active',
+        notes: '',
+      }),
+    });
+    const account = await accountResponse.json() as { id: number };
+
+    const postResponse = await fetch(`${baseUrl}/posts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountId: account.id,
+        content: content.body,
+        mediaPaths: [],
+        scheduledAt: '2026-05-01T10:00:00.000Z',
+        status: 'queued',
+      }),
+    });
+    const post = await postResponse.json() as { id: number };
+
+    const [contentsResponse, tasksResponse, platformsResponse, settingsResponse, runsResponse] = await Promise.all([
+      fetch(`${baseUrl}/contents`),
+      fetch(`${baseUrl}/distribution-tasks`),
+      fetch(`${baseUrl}/platforms`),
+      fetch(`${baseUrl}/settings`),
+      fetch(`${baseUrl}/publish-runs`),
+    ]);
+    const contents = await contentsResponse.json() as Array<{ id: number }>;
+    const tasks = await tasksResponse.json() as Array<{ legacyPostId: number; accountId: number; platform: string; status: string }>;
+    const platforms = await platformsResponse.json() as Array<{ code: string }>;
+    const settings = await settingsResponse.json() as Array<{ key: string }>;
+    const runs = await runsResponse.json() as unknown[];
+
+    expect(contentResponse.status).toBe(200);
+    expect(accountResponse.status).toBe(200);
+    expect(postResponse.status).toBe(200);
+    expect(contents).toContainEqual(expect.objectContaining({ id: content.id }));
+    expect(tasks).toContainEqual(expect.objectContaining({
+      legacyPostId: post.id,
+      accountId: account.id,
+      platform: 'weibo',
+      status: 'queued',
+    }));
+    expect(platforms).toContainEqual(expect.objectContaining({ code: 'weibo' }));
+    expect(settings.length).toBeGreaterThan(0);
+    expect(runs).toEqual([]);
   });
 
   test('serves content version history through the local api', async () => {
@@ -196,6 +315,65 @@ describe('http api', () => {
     });
   });
 
+  test('deletes accounts and their related queue records through the local api', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'delete account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+    });
+    const post = db.posts.create({
+      accountId: account.id,
+      content: 'delete account post',
+      mediaPaths: [],
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+    });
+    const task = db.distributionTasks.list().find((item) => item.legacyPostId === post.id);
+    if (!task) {
+      throw new Error('Expected task for account deletion test');
+    }
+    db.publishRuns.create({
+      taskId: task.id,
+      accountId: account.id,
+      platform: 'weibo',
+      status: 'failed',
+      message: 'delete me',
+      startedAt: '2026-05-01T10:00:00.000Z',
+      finishedAt: '2026-05-01T10:00:02.000Z',
+      screenshotPath: '',
+    });
+    const scheduler = new PublishScheduler(db);
+    const port = 51846;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/accounts/${account.id}`, {
+      method: 'DELETE',
+    });
+    const deleted = await response.json() as { ok: boolean; message: string };
+    const accountsResponse = await fetch(`http://127.0.0.1:${port}/accounts`);
+    const accounts = await accountsResponse.json() as Array<{ id: number }>;
+    const postsResponse = await fetch(`http://127.0.0.1:${port}/posts`);
+    const posts = await postsResponse.json() as Array<{ id: number }>;
+    const tasksResponse = await fetch(`http://127.0.0.1:${port}/distribution-tasks`);
+    const tasks = await tasksResponse.json() as Array<{ accountId: number }>;
+    const runsResponse = await fetch(`http://127.0.0.1:${port}/publish-runs`);
+    const runs = await runsResponse.json() as Array<{ accountId: number }>;
+
+    expect(response.status).toBe(200);
+    expect(deleted).toMatchObject({ ok: true });
+    expect(accounts).not.toContainEqual(expect.objectContaining({ id: account.id }));
+    expect(posts).not.toContainEqual(expect.objectContaining({ id: post.id }));
+    expect(tasks).not.toContainEqual(expect.objectContaining({ accountId: account.id }));
+    expect(runs).not.toContainEqual(expect.objectContaining({ accountId: account.id }));
+  });
+
   test('stores successful account connection checks in health fields', async () => {
     const db = await createDatabase(':memory:');
     const account = db.accounts.create({
@@ -225,6 +403,71 @@ describe('http api', () => {
       status: 'active',
       healthMessage: expect.stringContaining('Connected to Healthy account'),
     });
+  });
+
+  test('explains manual debugging port connection failures', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'Closed port account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9,
+      status: 'active',
+      notes: '',
+    });
+    db.settings.set('browser.connectionTimeoutMs', '1000');
+    const scheduler = new PublishScheduler(db);
+    const port = 51847;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/accounts/${account.id}/test-connection`, {
+      method: 'POST',
+    });
+    const result = await response.json() as { ok: boolean; message: string };
+    const refreshed = db.accounts.findById(account.id);
+
+    expect(response.status).toBe(200);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('Unable to connect to Chrome debugging port 9');
+    expect(result.message).not.toBe('fetch failed');
+    expect(refreshed).toMatchObject({
+      status: 'needs_manual_action',
+      manualActionReason: 'Connection test failed',
+      healthMessage: expect.stringContaining('Chrome debugging port 9'),
+    });
+  });
+
+  test('explains AdsPower local api connection failures', async () => {
+    const db = await createDatabase(':memory:');
+    db.settings.set('adspower.apiKey', 'test-key');
+    db.settings.set('browser.connectionTimeoutMs', '1000');
+    const account = db.accounts.create({
+      name: 'AdsPower offline account',
+      platform: 'weibo',
+      browserMode: 'adspower',
+      providerProfileId: 'profile-1',
+      wsEndpoint: '',
+      debuggingPort: null,
+      status: 'active',
+      notes: '',
+    });
+    const scheduler = new PublishScheduler(db);
+    const port = 51848;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/accounts/${account.id}/test-connection`, {
+      method: 'POST',
+    });
+    const result = await response.json() as { ok: boolean; message: string };
+
+    expect(response.status).toBe(200);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('Unable to connect to AdsPower Local API');
+    expect(result.message).not.toBe('fetch failed');
   });
 
   test('lists distribution tasks created from post submissions', async () => {

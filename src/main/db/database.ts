@@ -191,7 +191,7 @@ export async function createDatabase(filename: string) {
 
     upsertSetting('scheduler.intervalMs', '30000', 'Automatic publishing scheduler interval in milliseconds.');
     upsertSetting('http.port', '5183', 'Local HTTP API port.');
-    upsertSetting('http.allowedOrigins', 'http://127.0.0.1:5173,http://localhost:5173', 'Comma-separated local frontend origins allowed to access the HTTP API.');
+    upsertSetting('http.allowedOrigins', 'http://127.0.0.1:5173,http://localhost:5173,null', 'Comma-separated local frontend origins allowed to access the HTTP API.');
     upsertSetting('browser.connectionTimeoutMs', '12000', 'Browser connection test timeout in milliseconds.');
     upsertSetting('adspower.apiKey', process.env.ADSPOWER_API_KEY ?? '', 'AdsPower Local API key.');
     upsertSetting('updates.enabled', 'true', 'Enable GitHub Releases update checks.');
@@ -289,6 +289,32 @@ export async function createDatabase(filename: string) {
           id,
         );
         return mapAccount(firstRow(sqlite.prepare('SELECT * FROM accounts WHERE id = ?').get(id)));
+      },
+      delete(id: number): boolean {
+        sqlite.transaction(() => {
+          sqlite.prepare(`
+            DELETE FROM publish_logs
+            WHERE accountId = ?
+               OR postId IN (SELECT id FROM posts WHERE accountId = ?)
+          `).run(id, id);
+          sqlite.prepare(`
+            DELETE FROM publish_runs
+            WHERE accountId = ?
+               OR taskId IN (
+                 SELECT id FROM distribution_tasks
+                 WHERE accountId = ?
+                    OR legacyPostId IN (SELECT id FROM posts WHERE accountId = ?)
+               )
+          `).run(id, id, id);
+          sqlite.prepare(`
+            DELETE FROM distribution_tasks
+            WHERE accountId = ?
+               OR legacyPostId IN (SELECT id FROM posts WHERE accountId = ?)
+          `).run(id, id);
+          sqlite.prepare('DELETE FROM posts WHERE accountId = ?').run(id);
+          sqlite.prepare('DELETE FROM accounts WHERE id = ?').run(id);
+        })();
+        return !this.findById(id);
       },
     },
     posts: {
@@ -408,6 +434,8 @@ export async function createDatabase(filename: string) {
       },
       delete(id: number): boolean {
         sqlite.transaction(() => {
+          sqlite.prepare('DELETE FROM publish_runs WHERE taskId IN (SELECT id FROM distribution_tasks WHERE contentId = ?)').run(id);
+          sqlite.prepare('DELETE FROM distribution_tasks WHERE contentId = ?').run(id);
           sqlite.prepare('DELETE FROM content_versions WHERE contentId = ?').run(id);
           sqlite.prepare('DELETE FROM media_assets WHERE contentId = ?').run(id);
           sqlite.prepare('DELETE FROM content_items WHERE id = ?').run(id);

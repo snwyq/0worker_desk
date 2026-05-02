@@ -1,7 +1,13 @@
-import { app } from 'electron';
-import { autoUpdater } from 'electron-updater';
+import electron from 'electron';
+import electronUpdater from 'electron-updater';
 import type { UpdateCheckResult, UpdateConfig } from '../../shared/types.js';
 import type { AppDatabase } from '../db/database.js';
+
+const { app } = electron;
+
+function getAutoUpdater() {
+  return electronUpdater.autoUpdater;
+}
 
 export function readUpdateConfig(repositories: AppDatabase): UpdateConfig {
   const enabled = repositories.settings.get('updates.enabled') !== 'false';
@@ -46,6 +52,7 @@ export function readUpdateConfig(repositories: AppDatabase): UpdateConfig {
 
 export function configureAutoUpdater(repositories: AppDatabase) {
   const config = readUpdateConfig(repositories);
+  const autoUpdater = getAutoUpdater();
   autoUpdater.autoDownload = false;
   autoUpdater.allowPrerelease = config.channel !== 'latest';
   autoUpdater.setFeedURL({
@@ -69,6 +76,7 @@ export async function checkForUpdates(repositories: AppDatabase): Promise<Update
   }
 
   configureAutoUpdater(repositories);
+  const autoUpdater = getAutoUpdater();
   const result = await autoUpdater.checkForUpdates();
   return {
     ok: true,

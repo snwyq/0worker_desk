@@ -222,6 +222,11 @@ export interface DeletePostResult {
   message: string;
 }
 
+export interface DeleteAccountResult {
+  ok: boolean;
+  message: string;
+}
+
 export interface SchedulerStatus {
   running: boolean;
   intervalMs: number;

@@ -99,6 +99,28 @@ export function AccountsPage() {
     }
   }
 
+  async function deleteAccount(account: Account) {
+    if (!window.confirm(t('accounts.deleteConfirm', { name: account.name }))) {
+      return;
+    }
+
+    setError('');
+    setConnectionMessage('');
+
+    try {
+      const result = await appApi.accounts.delete(account.id);
+      if (!result.ok) {
+        throw new Error(result.message || t('accounts.deleteFailed'));
+      }
+      if (editingId === account.id) {
+        resetForm();
+      }
+      await loadAccounts();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   function editAccount(account: Account) {
     setEditingId(account.id);
     setName(account.name);
@@ -230,6 +252,9 @@ export function AccountsPage() {
               </button>
               <button className="inline-button" type="button" onClick={() => editAccount(account)}>
                 {t('accounts.edit')}
+              </button>
+              <button className="inline-button danger" type="button" onClick={() => void deleteAccount(account)}>
+                {t('accounts.delete')}
               </button>
             </span>
           </div>

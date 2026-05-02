@@ -1,11 +1,14 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import electron from 'electron';
 import type { CreateAccountInput, CreateContentItemInput, CreatePostInput, UpdateAccountInput, UpdateContentItemInput, UpdateDistributionTaskInput } from '../src/shared/types.js';
+
+const { contextBridge, ipcRenderer } = electron;
 
 contextBridge.exposeInMainWorld('weiboPublisher', {
   accounts: {
     list: () => ipcRenderer.invoke('accounts:list'),
     create: (input: CreateAccountInput) => ipcRenderer.invoke('accounts:create', input),
     update: (id: number, input: UpdateAccountInput) => ipcRenderer.invoke('accounts:update', id, input),
+    delete: (id: number) => ipcRenderer.invoke('accounts:delete', id),
     testConnection: (accountId: number) => ipcRenderer.invoke('accounts:testConnection', accountId),
   },
   posts: {
