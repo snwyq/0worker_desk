@@ -166,7 +166,7 @@
 - Vite
 - Playwright
 - Puppeteer Core
-- SQL.js
+- better-sqlite3
 - i18next
 
 ## 开发运行

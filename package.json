@@ -48,8 +48,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "CHANGE_ME",
-        "repo": "CHANGE_ME"
+        "owner": "snwyq",
+        "repo": "0worker_desk"
       }
     ]
   },

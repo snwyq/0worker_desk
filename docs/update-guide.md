@@ -15,7 +15,7 @@ The default update provider is GitHub Releases. Configure these database setting
 - `updates.repo`
 - `updates.channel`
 
-For production distribution, replace `CHANGE_ME` in `package.json` build publish config with the real GitHub owner and repository. Windows code signing should be added before public release to reduce SmartScreen warnings.
+The default package publish configuration targets `snwyq/0worker_desk` on GitHub Releases. Windows code signing should be added before public release to reduce SmartScreen warnings.
 
 ## Native SQLite Note
 
