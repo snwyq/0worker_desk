@@ -2,26 +2,26 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { 
   Settings, 
-  Play, 
-  Square, 
   RefreshCcw, 
   Languages, 
   Cpu, 
   ShieldCheck, 
-  Zap, 
   Info, 
   Save, 
   Terminal, 
   ChevronRight,
   Database,
-  Globe
+  Globe,
+  AlertTriangle,
+  CheckCircle2,
+  Sparkles
 } from 'lucide-react';
-import type { AppSetting, SchedulerStatus, UpdateCheckResult, UpdateConfig } from '../../shared/types';
+
+import type { AppSetting, UpdateCheckResult, UpdateConfig } from '../../shared/types';
 import { appApi } from '../api';
 
 export function SettingsPage() {
   const { i18n, t } = useTranslation();
-  const [status, setStatus] = useState<SchedulerStatus | null>(null);
   const [settings, setSettings] = useState<AppSetting[]>([]);
   const [updateConfig, setUpdateConfig] = useState<UpdateConfig | null>(null);
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
@@ -30,12 +30,10 @@ export function SettingsPage() {
   const [success, setSuccess] = useState('');
 
   async function refresh() {
-    const [nextStatus, nextSettings, nextUpdateStatus] = await Promise.all([
-      appApi.scheduler.status(),
+    const [nextSettings, nextUpdateStatus] = await Promise.all([
       appApi.settings.list(),
       appApi.updates.status(),
     ]);
-    setStatus(nextStatus);
     setSettings(nextSettings);
     setUpdateConfig(nextUpdateStatus.config);
     setDraftValues(Object.fromEntries(nextSettings.map((setting) => [setting.key, setting.value])));
@@ -43,31 +41,7 @@ export function SettingsPage() {
 
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => {
-      void refresh();
-    }, 10000);
-    return () => window.clearInterval(timer);
   }, []);
-
-  async function startWorker() {
-    try {
-      setStatus(await appApi.scheduler.start());
-      setSuccess('调度器已启动');
-      setTimeout(() => setSuccess(''), 3000);
-    } catch (cause) {
-      setError(String(cause));
-    }
-  }
-
-  async function stopWorker() {
-    try {
-      setStatus(await appApi.scheduler.stop());
-      setSuccess('调度器已停止');
-      setTimeout(() => setSuccess(''), 3000);
-    } catch (cause) {
-      setError(String(cause));
-    }
-  }
 
   async function changeLanguage(language: string) {
     localStorage.setItem('language', language);
@@ -106,10 +80,6 @@ export function SettingsPage() {
           <p className="tw-text-slate-500 tw-text-sm tw-mt-1">配置应用程序全局参数与自动化调度逻辑</p>
         </div>
         <div className="tw-flex tw-items-center tw-gap-3">
-           <div className="tw-px-4 tw-py-2 tw-bg-white tw-border tw-border-slate-100 tw-rounded-2xl tw-shadow-sm tw-flex tw-items-center tw-gap-2">
-              <div className={`tw-w-2 tw-h-2 tw-rounded-full ${status?.running ? 'tw-bg-green-500 tw-animate-pulse' : 'tw-bg-slate-300'}`} />
-              <span className="tw-text-xs tw-font-bold tw-text-slate-600">{status?.running ? '调度运行中' : '调度已停止'}</span>
-           </div>
         </div>
       </div>
 
@@ -205,59 +175,6 @@ export function SettingsPage() {
           </div>
         </div>
 
-        {/* Scheduler Status Card */}
-        <div className="tw-bg-white tw-rounded-[32px] tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm hover:tw-shadow-xl tw-transition-all tw-duration-500">
-          <div className="tw-flex tw-items-center tw-justify-between tw-mb-8">
-            <div className="tw-flex tw-items-center tw-gap-4">
-              <div className="tw-p-3 tw-bg-purple-50 tw-text-purple-600 tw-rounded-2xl">
-                <Zap size={24} />
-              </div>
-              <div>
-                <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">自动调度</h2>
-                <p className="tw-text-xs tw-text-slate-400">后台分发引擎状态</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="tw-grid tw-grid-cols-2 tw-gap-4 tw-mb-8">
-            <div className="tw-bg-slate-50/80 tw-p-5 tw-rounded-[24px] tw-border tw-border-slate-100">
-              <p className="tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-mb-1 tw-tracking-widest">检查间隔</p>
-              <p className="tw-text-xl tw-font-bold tw-text-slate-900">
-                {status ? Math.round(status.intervalMs / 1000) : '-'} <span className="tw-text-xs tw-font-medium tw-text-slate-400">SEC</span>
-              </p>
-            </div>
-            <div className="tw-bg-slate-50/80 tw-p-5 tw-rounded-[24px] tw-border tw-border-slate-100">
-              <p className="tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-mb-1 tw-tracking-widest">最后执行</p>
-              <p className="tw-text-xs tw-font-bold tw-text-slate-700 tw-truncate tw-mt-1">
-                {status?.lastRunAt ? new Date(status.lastRunAt).toLocaleTimeString() : '尚未开始'}
-              </p>
-            </div>
-          </div>
-
-          <div className="tw-flex tw-gap-3">
-            {!status?.running ? (
-              <button 
-                onClick={startWorker}
-                className="tw-flex-1 tw-flex tw-items-center tw-justify-center tw-gap-2 tw-px-6 tw-py-4 tw-bg-brand-600 tw-text-white tw-rounded-2xl tw-text-sm tw-font-bold hover:tw-bg-brand-700 tw-shadow-lg tw-shadow-brand-100 tw-transition-all active:tw-scale-95"
-              >
-                <Play size={18} /> 启动引擎
-              </button>
-            ) : (
-              <button 
-                onClick={stopWorker}
-                className="tw-flex-1 tw-flex tw-items-center tw-justify-center tw-gap-2 tw-px-6 tw-py-4 tw-bg-red-50 tw-text-red-600 tw-rounded-2xl tw-text-sm tw-font-bold hover:tw-bg-red-100 tw-transition-all active:tw-scale-95"
-              >
-                <Square size={18} /> 停止调度
-              </button>
-            )}
-            <button 
-              onClick={refresh}
-              className="tw-p-4 tw-bg-slate-50 tw-text-slate-400 tw-rounded-2xl hover:tw-bg-slate-100 hover:tw-text-slate-600 tw-transition-all"
-            >
-              <RefreshCcw size={22} />
-            </button>
-          </div>
-        </div>
 
         {/* Update Card */}
         <div className="tw-bg-white tw-rounded-[32px] tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm hover:tw-shadow-xl tw-transition-all tw-duration-500">
@@ -289,7 +206,61 @@ export function SettingsPage() {
             检查系统更新
           </button>
         </div>
+
+        {/* AI Configuration Card */}
+        <div className="tw-bg-white tw-rounded-[32px] tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm hover:tw-shadow-xl tw-transition-all tw-duration-500 tw-col-span-1 lg:tw-col-span-2">
+          <div className="tw-flex tw-items-center tw-gap-4 tw-mb-8">
+            <div className="tw-p-3 tw-bg-purple-50 tw-text-purple-600 tw-rounded-2xl">
+              <Sparkles size={24} />
+            </div>
+            <div>
+              <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">AI 创作引擎配置</h2>
+              <p className="tw-text-xs tw-text-slate-400">管理 LLM 提供商凭证</p>
+            </div>
+          </div>
+
+          <div className="tw-grid tw-grid-cols-1 md:tw-grid-cols-2 tw-gap-6">
+            <div className="tw-space-y-2">
+              <label className="tw-text-xs tw-font-bold tw-text-slate-500 tw-ml-1">DashScope API Key (通义千问)</label>
+              <div className="tw-flex tw-gap-2">
+                <input 
+                  type="password"
+                  value={draftValues['ai.dashscopeKey'] ?? ''}
+                  onChange={(e) => setDraftValues(prev => ({ ...prev, 'ai.dashscopeKey': e.target.value }))}
+                  className="tw-flex-1 tw-bg-slate-50 tw-border tw-border-slate-100 tw-px-4 tw-py-2.5 tw-rounded-xl tw-text-sm tw-font-mono focus:tw-bg-white focus:tw-ring-4 focus:tw-ring-brand-500/10 tw-transition-all"
+                  placeholder="sk-..."
+                />
+                <button 
+                  onClick={() => saveSetting('ai.dashscopeKey')}
+                  className="tw-px-4 tw-bg-slate-100 tw-text-slate-600 tw-rounded-xl hover:tw-bg-brand-500 hover:tw-text-white tw-transition-all"
+                >
+                  <Save size={16} />
+                </button>
+              </div>
+            </div>
+
+            <div className="tw-space-y-2">
+              <label className="tw-text-xs tw-font-bold tw-text-slate-500 tw-ml-1">APIYi API Key (Gemini/Image)</label>
+              <div className="tw-flex tw-gap-2">
+                <input 
+                  type="password"
+                  value={draftValues['ai.apiyiKey'] ?? ''}
+                  onChange={(e) => setDraftValues(prev => ({ ...prev, 'ai.apiyiKey': e.target.value }))}
+                  className="tw-flex-1 tw-bg-slate-50 tw-border tw-border-slate-100 tw-px-4 tw-py-2.5 tw-rounded-xl tw-text-sm tw-font-mono focus:tw-bg-white focus:tw-ring-4 focus:tw-ring-brand-500/10 tw-transition-all"
+                  placeholder="sk-..."
+                />
+                <button 
+                  onClick={() => saveSetting('ai.apiyiKey')}
+                  className="tw-px-4 tw-bg-slate-100 tw-text-slate-600 tw-rounded-xl hover:tw-bg-brand-500 hover:tw-text-white tw-transition-all"
+                >
+                  <Save size={16} />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
+
 
       {/* Advanced Settings */}
       <div className="tw-bg-white tw-rounded-[32px] tw-border tw-border-slate-100 tw-overflow-hidden tw-shadow-sm">

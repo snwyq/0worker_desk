@@ -14,6 +14,29 @@
   
   --font-sans: "Outfit", "Inter", "system-ui", "sans-serif";
   --font-mono: "JetBrains Mono", "monospace";
+  
+  --brand-50: #f8fafc;
+  --brand-100: #f1f5f9;
+  --brand-200: #e2e8f0;
+  --brand-300: #cbd5e1;
+  --brand-400: #94a3b8;
+  --brand-500: #3b82f6; /* 专业蓝作为主色，替代黑色 */
+  --brand-600: #2563eb;
+  --brand-700: #1d4ed8;
+  --brand-accent: #3b82f6; 
+}
+
+/* 高级柔和阴影 */
+.shadow-premium {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.02), 0 10px 20px rgba(0,0,0,0.03);
+}
+
+.shadow-glass {
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+}
+
+.border-subtle {
+  border: 1px solid rgba(0, 0, 0, 0.04);
 }
 
 body {
@@ -61,6 +84,15 @@ body {
 
 .animate-fade-in {
   animation: fadeIn 0.3s ease-out forwards;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 /* 清理旧的 IDE 样式残余 */

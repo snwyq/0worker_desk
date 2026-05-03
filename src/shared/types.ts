@@ -19,8 +19,45 @@ export interface Account {
   lastCheckedAt: string;
   manualActionReason: string;
   notes: string;
+  activePluginCode: string;
+  aiConfigJson: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AiPlugin {
+  id: number;
+  code: string;
+  name: string;
+  description: string;
+  configJson: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AiWorkflow {
+  id: number;
+  pluginCode: string;
+  code: string;
+  name: string;
+  definitionJson: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AiWorkflowRunStatus = 'running' | 'paused' | 'failed' | 'completed';
+
+export interface AiWorkflowRun {
+  id: number;
+  runId: string;
+  pluginCode: string;
+  workflowCode: string;
+  accountId: number | null;
+  status: AiWorkflowRunStatus;
+  contextSnapshot: Record<string, unknown>;
+  logs: any[];
+  startedAt: string;
+  finishedAt: string;
 }
 
 export interface CreateAccountInput {
@@ -35,6 +72,8 @@ export interface CreateAccountInput {
   lastCheckedAt?: string;
   manualActionReason?: string;
   notes: string;
+  activePluginCode?: string;
+  aiConfigJson?: Record<string, unknown>;
 }
 
 export interface UpdateAccountInput {
@@ -48,6 +87,8 @@ export interface UpdateAccountInput {
   lastCheckedAt?: string;
   manualActionReason?: string;
   notes: string;
+  activePluginCode?: string;
+  aiConfigJson?: Record<string, unknown>;
 }
 
 export interface Post {
@@ -250,3 +291,21 @@ export interface UpdateConfig {
   canCheck: boolean;
   reason?: string;
 }
+
+export interface AiGenerateOptions {
+  prompt: string;
+  provider?: 'dashscope' | 'apiyi';
+  model?: string;
+  maxTokens?: number;
+}
+
+export interface AiImageOptions {
+  prompt: string;
+  size?: string;
+}
+
+export interface AiResponse {
+  content: string;
+  usage?: any;
+}
+

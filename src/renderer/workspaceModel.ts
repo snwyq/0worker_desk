@@ -1,4 +1,13 @@
-export type WorkspaceModule = 'home' | 'accounts' | 'distribution' | 'settings';
+export type WorkspaceModule = 
+  | 'home' 
+  | 'ai-writer' 
+  | 'agent-engine'
+  | 'asset-factory' 
+  | 'accounts' 
+  | 'distribution' 
+  | 'hot-topics'
+  | 'settings';
+
 
 export interface WorkspaceTab {
   id: string;
@@ -18,30 +27,56 @@ export const moduleTabs: Record<WorkspaceModule, WorkspaceTab> = {
   home: {
     id: 'dashboard',
     module: 'home',
-    title: '控制中心',
-    subtitle: '查看整体运行状态',
+    title: '仪表盘',
+    subtitle: '实时监控与核心策略调度',
     pinned: true,
+  },
+
+  'ai-writer': {
+    id: 'ai-writer-tab',
+    module: 'ai-writer',
+    title: 'AI 智能创作',
+    subtitle: '基于大模型的文案生成与优化',
+  },
+  'agent-engine': {
+    id: 'agent-engine-tab',
+    module: 'agent-engine',
+    title: 'Agent 引擎',
+    subtitle: '自动化内容生产流水线编排',
+  },
+  'asset-factory': {
+    id: 'asset-factory-tab',
+    module: 'asset-factory',
+    title: '素材工厂',
+    subtitle: '多媒体素材管理与批量处理',
   },
   accounts: {
     id: 'accounts-matrix',
     module: 'accounts',
     title: '账号矩阵',
-    subtitle: '管理要发布内容的平台账号',
+    subtitle: '全平台社交账号集成管理',
     pinned: true,
   },
   distribution: {
     id: 'distribution-runs',
     module: 'distribution',
     title: '发布调度',
-    subtitle: '查看哪些内容待发布、已发布或需要人工处理',
+    subtitle: '自动化发布流与状态追踪',
+  },
+  'hot-topics': {
+    id: 'hot-topics-tab',
+    module: 'hot-topics',
+    title: '实时热点',
+    subtitle: '聚合全网热点，提供即时创作灵感',
   },
   settings: {
     id: 'settings-engine',
     module: 'settings',
     title: '系统设置',
-    subtitle: '语言、网络、账号连接和更新设置',
+    subtitle: '偏好设置、网络环境与安全选项',
   },
 };
+
 
 export function createInitialWorkspace(): WorkspaceState {
   const homeTab = moduleTabs.home;

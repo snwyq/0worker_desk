@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDatabase } from '../src/main/db/database.js';
+import { initializeWorkflowEngine } from '../src/main/core/workflow/EngineRegistry.js';
 import { registerIpcHandlers, startHttpApi } from '../src/main/ipc/handlers.js';
 import { PublishScheduler } from '../src/main/publisher/Scheduler.js';
 
@@ -12,6 +13,7 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
 async function createWindow() {
   const databasePath = path.join(app.getPath('userData'), 'weibo-publisher.sqlite');
   const repositories = await createDatabase(databasePath);
+  initializeWorkflowEngine(repositories);
   const scheduler = new PublishScheduler(repositories);
   registerIpcHandlers(repositories, scheduler);
   startHttpApi(repositories, scheduler);

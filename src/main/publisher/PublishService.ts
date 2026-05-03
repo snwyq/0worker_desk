@@ -39,6 +39,7 @@ export async function publishPostNow(repositories: AppDatabase, postId: number, 
 
   try {
     repositories.posts.updateStatus(post.id, 'publishing');
+    recordRun(repositories, post.id, 'publishing', 'Starting automated publish...', startedAt);
     const browserInfo = await startAdsPowerBrowser(account, repositories);
     const draft = await fillWeiboDraft(browserInfo, post, { logPath: options.logPath });
     if (!draft.ok) {

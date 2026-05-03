@@ -67,4 +67,19 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
   app: {
     relaunch: () => ipcRenderer.invoke('app:relaunch'),
   },
+  ai: {
+    generate: (options: any) => ipcRenderer.invoke('ai:generate', options),
+    generateImage: (options: any) => ipcRenderer.invoke('ai:generateImage', options),
+    listPlugins: () => ipcRenderer.invoke('ai:listPlugins'),
+    listWorkflows: (pluginCode: string) => ipcRenderer.invoke('ai:listWorkflows', pluginCode),
+    listHotTopics: () => ipcRenderer.invoke('ai:listHotTopics'),
+    previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any) => ipcRenderer.invoke('ai:previewWorkflow_v3', pluginCode, workflowCode, inputParams),
+    startAgentSchedule: (accountId: number) => ipcRenderer.invoke('ai:startAgentSchedule', accountId),
+    onWorkflowLog: (callback: any) => {
+      const subscription = (_event: any, log: any) => callback(log);
+      ipcRenderer.on('ai:workflow-log', subscription);
+      return () => ipcRenderer.removeListener('ai:workflow-log', subscription);
+    },
+  },
 });
+

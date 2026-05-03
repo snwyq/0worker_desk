@@ -15,6 +15,8 @@ const account: Account = {
   lastCheckedAt: '',
   manualActionReason: '',
   notes: '',
+  activePluginCode: '',
+  aiConfigJson: {},
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };

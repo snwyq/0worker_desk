@@ -12,14 +12,16 @@ import {
   ChevronUp, 
   Play, 
   PenLine, 
-  Trash2, 
-  RotateCcw, 
+  Trash2,
+  RotateCcw,
   XCircle,
   FileText,
   Image as ImageIcon,
   History,
   MoreHorizontal,
   Settings,
+  Square,
+  RefreshCcw,
   Rocket,
   Zap,
   Users,
@@ -31,7 +33,7 @@ import {
   Maximize2,
   FolderOpen
 } from 'lucide-react';
-import type { Account, ContentItem, DistributionTask, PlatformCode, Post, PostStatus, PublishRun } from '../../shared/types';
+import type { Account, ContentItem, DistributionTask, PlatformCode, Post, PostStatus, PublishRun, SchedulerStatus } from '../../shared/types';
 import { appApi } from '../api';
 import { readTaskEditorDraft } from '../queueEditorModel';
 import { htmlToPlainPreview } from '../textFormatting';
@@ -59,6 +61,7 @@ export function QueuePage() {
   const [expandedTaskId, setExpandedTaskId] = useState<number | null>(null);
   const [taskRuns, setTaskRuns] = useState<Record<number, PublishRun[]>>({});
   const [busyPost, setBusyPost] = useState<Post | null>(null);
+  const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null);
   
   // Form State
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
@@ -68,7 +71,6 @@ export function QueuePage() {
   const [error, setError] = useState('');
   const [editorHtml, setEditorHtml] = useState('');
   
-  const editorRef = useRef<HTMLDivElement>(null);
   // 用一个 ref 来存储真实的 HTML 内容，避免 React 重新渲染导致的输入 Bug
   const contentRef = useRef('');
 
@@ -91,15 +93,41 @@ export function QueuePage() {
     }
   }
 
-  useEffect(() => {
-    void load();
-  }, []);
+  async function refreshScheduler() {
+    try {
+      const nextStatus = await appApi.scheduler.status();
+      setSchedulerStatus(nextStatus);
+    } catch (err) {
+      console.error('Failed to refresh scheduler status:', err);
+    }
+  }
+
+  async function startWorker() {
+    try {
+      setSchedulerStatus(await appApi.scheduler.start());
+    } catch (err) {
+      alert('启动失败: ' + String(err));
+    }
+  }
+
+  async function stopWorker() {
+    try {
+      setSchedulerStatus(await appApi.scheduler.stop());
+    } catch (err) {
+      alert('停止失败: ' + String(err));
+    }
+  }
 
   useEffect(() => {
-    if (showForm && editorRef.current && editorRef.current.innerHTML !== editorHtml) {
-      editorRef.current.innerHTML = editorHtml;
-    }
-  }, [showForm, editingTaskId, editorHtml]);
+    void load();
+    void refreshScheduler();
+    const timer = window.setInterval(() => {
+      void load();
+      void refreshScheduler();
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, []);
+
 
   const accountsById = new Map(accounts.map((a) => [a.id, a]));
   const postsById = new Map(posts.map((p) => [p.id, p]));
@@ -123,7 +151,6 @@ export function QueuePage() {
     setMediaPaths('');
     setEditorHtml('');
     contentRef.current = '';
-    if (editorRef.current) editorRef.current.innerHTML = '';
     
     const now = new Date();
     now.setHours(now.getHours() + 1);
@@ -157,7 +184,7 @@ export function QueuePage() {
       if (isNaN(dateObj.getTime())) throw new Error('发布时间格式不正确');
 
       const nextMediaPaths = mediaPaths.split('\n').map((path) => path.trim()).filter(Boolean);
-      const finalContent = editorRef.current ? editorRef.current.innerHTML : contentRef.current;
+      const finalContent = editorHtml;
 
       if (editingTaskId) {
         await appApi.distributionTasks.update(editingTaskId, {
@@ -184,10 +211,6 @@ export function QueuePage() {
     }
   }
 
-  const execCmd = (cmd: string, val?: string) => {
-    document.execCommand(cmd, false, val);
-    if (editorRef.current) contentRef.current = editorRef.current.innerHTML;
-  };
 
   async function handleBrowseFiles() {
     try {
@@ -235,6 +258,8 @@ export function QueuePage() {
     switch (status) {
       case 'published':
         return <span className="tw-px-3 tw-py-1 tw-bg-emerald-50 tw-text-emerald-600 tw-rounded-full tw-text-[10px] tw-font-black tw-uppercase">已发布</span>;
+      case 'publishing':
+        return <span className="tw-px-3 tw-py-1 tw-bg-brand-50 tw-text-brand-600 tw-rounded-full tw-text-[10px] tw-font-black tw-uppercase tw-animate-pulse">发布中</span>;
       case 'failed':
         return <span className="tw-px-3 tw-py-1 tw-bg-red-50 tw-text-red-600 tw-rounded-full tw-text-[10px] tw-font-black tw-uppercase">失败</span>;
       case 'needs_manual_action':
@@ -260,13 +285,52 @@ export function QueuePage() {
           <h1 className="tw-text-3xl tw-font-black tw-text-slate-900 tw-tracking-tight">发布调度</h1>
           <p className="tw-text-slate-400 tw-text-sm tw-mt-1">管理并监控全平台自动化发布任务</p>
         </div>
-        <button 
-          onClick={() => { resetForm(); setShowForm(true); }}
-          className="tw-flex tw-items-center tw-gap-2 tw-px-6 tw-py-3.5 tw-bg-slate-900 tw-text-white tw-rounded-[20px] tw-text-sm tw-font-bold tw-shadow-2xl tw-shadow-slate-200 hover:tw-bg-brand-600 tw-transition-all active:tw-scale-95"
-        >
-          <Plus size={18} />
-          部署新任务
-        </button>
+        <div className="tw-flex tw-items-center tw-gap-3">
+          {/* Scheduler Controls */}
+          <div className="tw-bg-white tw-border tw-border-slate-100 tw-rounded-[24px] tw-p-2 tw-pr-6 tw-flex tw-items-center tw-gap-4 tw-shadow-sm">
+             <div className="tw-flex tw-items-center tw-gap-3 tw-px-4 tw-py-2 tw-bg-slate-50 tw-rounded-2xl tw-border tw-border-slate-100">
+                <div className={`tw-w-2.5 tw-h-2.5 tw-rounded-full ${schedulerStatus?.running ? 'tw-bg-emerald-500 tw-animate-pulse' : 'tw-bg-slate-300'}`} />
+                <span className="tw-text-[11px] tw-font-black tw-text-slate-600 tw-uppercase tw-tracking-tight">
+                  {schedulerStatus?.running ? '引擎运行中' : '引擎已停止'}
+                </span>
+             </div>
+
+             <div className="tw-flex tw-items-center tw-gap-1">
+                {!schedulerStatus?.running ? (
+                  <button 
+                    onClick={startWorker}
+                    className="tw-w-10 tw-h-10 tw-bg-emerald-50 tw-text-emerald-600 tw-rounded-xl tw-flex tw-items-center tw-justify-center hover:tw-bg-emerald-100 tw-transition-all active:tw-scale-95"
+                    title="启动引擎"
+                  >
+                    <Play size={18} fill="currentColor" />
+                  </button>
+                ) : (
+                  <button 
+                    onClick={stopWorker}
+                    className="tw-w-10 tw-h-10 tw-bg-red-50 tw-text-red-500 tw-rounded-xl tw-flex tw-items-center tw-justify-center hover:tw-bg-red-100 tw-transition-all active:tw-scale-95"
+                    title="停止引擎"
+                  >
+                    <Square size={18} fill="currentColor" />
+                  </button>
+                )}
+                <button 
+                  onClick={refreshScheduler}
+                  className="tw-w-10 tw-h-10 tw-bg-slate-50 tw-text-slate-400 tw-rounded-xl tw-flex tw-items-center tw-justify-center hover:tw-bg-slate-100 hover:tw-text-slate-600 tw-transition-all"
+                  title="刷新状态"
+                >
+                  <RefreshCcw size={18} />
+                </button>
+             </div>
+          </div>
+
+          <button 
+            onClick={() => { resetForm(); setShowForm(true); }}
+            className="tw-flex tw-items-center tw-gap-2 tw-px-8 tw-py-4 tw-bg-slate-900 tw-text-white tw-rounded-[24px] tw-text-sm tw-font-black tw-shadow-2xl tw-shadow-slate-200 hover:tw-bg-brand-600 tw-transition-all active:tw-scale-95"
+          >
+            <Plus size={18} />
+            部署新任务
+          </button>
+        </div>
       </div>
 
       {/* Filters Bar */}
@@ -336,27 +400,17 @@ export function QueuePage() {
                   <div className="tw-col-span-8 tw-space-y-8">
                     <div className="tw-space-y-3">
                       <div className="tw-flex tw-items-center tw-justify-between">
-                        <label className="tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest tw-ml-1">发布内容 (可视化编辑)</label>
-                        <span className="tw-text-[10px] tw-font-bold tw-text-slate-300">STABLE RICH EDITOR</span>
+                        <label className="tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest tw-ml-1">发布内容 (仅限纯文本)</label>
+                        <span className="tw-text-[10px] tw-font-bold tw-text-slate-300">PLAIN TEXT MODE</span>
                       </div>
-                      <div className="tw-relative tw-bg-slate-50 tw-rounded-[32px] tw-border tw-border-slate-100 tw-overflow-hidden focus-within:tw-ring-4 focus-within:tw-ring-brand-500/10 focus-within:tw-border-brand-500/20 tw-transition-all">
-                        <div className="tw-flex tw-items-center tw-gap-1 tw-p-2 tw-border-b tw-border-slate-100 tw-bg-white/80 tw-backdrop-blur-sm">
-                           <button type="button" onClick={() => execCmd('bold')} className="tw-p-2 tw-text-slate-400 hover:tw-text-slate-900 hover:tw-bg-slate-50 tw-rounded-lg"><Bold size={16} /></button>
-                           <button type="button" onClick={() => execCmd('italic')} className="tw-p-2 tw-text-slate-400 hover:tw-text-slate-900 hover:tw-bg-slate-50 tw-rounded-lg"><Italic size={16} /></button>
-                           <div className="tw-w-px tw-h-4 tw-bg-slate-100 tw-mx-1" />
-                           <button type="button" onClick={() => execCmd('fontSize', '5')} className="tw-p-2 tw-text-slate-400 hover:tw-text-slate-900 hover:tw-bg-slate-50 tw-rounded-lg"><Type size={16} /></button>
-                           <button type="button" onClick={() => execCmd('foreColor', 'red')} className="tw-p-2 tw-text-slate-400 hover:tw-text-red-500 hover:tw-bg-red-50 tw-rounded-lg"><Palette size={16} /></button>
-                           <button type="button" onClick={() => execCmd('foreColor', 'black')} className="tw-p-2 tw-text-slate-400 hover:tw-text-slate-900 hover:tw-bg-slate-50 tw-rounded-lg"><Palette size={16} className="tw-rotate-180" /></button>
-                        </div>
-                        {/* 采用非受控模式，防止 React 渲染冲突导致的光标问题 */}
-                        <div
-                          ref={editorRef}
-                          contentEditable
-                          suppressContentEditableWarning
-                          className="tw-w-full tw-px-8 tw-py-8 tw-bg-white tw-min-h-[400px] focus:tw-outline-none tw-text-base tw-leading-relaxed tw-overflow-y-auto"
-                          onInput={(e) => {
-                            contentRef.current = e.currentTarget.innerHTML;
-                            setEditorHtml(e.currentTarget.innerHTML);
+                      <div className="tw-relative tw-bg-white tw-rounded-[32px] tw-border tw-border-slate-100 tw-overflow-hidden focus-within:tw-ring-4 focus-within:tw-ring-brand-500/10 focus-within:tw-border-brand-500/20 tw-transition-all">
+                        <textarea
+                          className="tw-w-full tw-px-8 tw-py-8 tw-bg-white tw-min-h-[400px] focus:tw-outline-none tw-text-base tw-leading-relaxed tw-resize-none tw-border-none"
+                          placeholder="输入发布内容，仅支持换行与分段..."
+                          value={editorHtml}
+                          onChange={(e) => {
+                            setEditorHtml(e.target.value);
+                            contentRef.current = e.target.value;
                           }}
                         />
                       </div>

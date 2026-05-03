@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   lastCheckedAt TEXT NOT NULL DEFAULT '',
   manualActionReason TEXT NOT NULL DEFAULT '',
   notes TEXT NOT NULL DEFAULT '',
+  activePluginCode TEXT NOT NULL DEFAULT '',
+  aiConfigJson TEXT NOT NULL DEFAULT '{}',
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
 );
@@ -140,4 +142,60 @@ CREATE INDEX IF NOT EXISTS idx_distribution_tasks_account_status ON distribution
 CREATE INDEX IF NOT EXISTS idx_distribution_tasks_legacy_post ON distribution_tasks(legacyPostId);
 CREATE INDEX IF NOT EXISTS idx_publish_runs_task_created ON publish_runs(taskId, createdAt);
 CREATE INDEX IF NOT EXISTS idx_publish_runs_platform_status ON publish_runs(platform, status);
+
+CREATE TABLE IF NOT EXISTS ai_plugins (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  configJson TEXT NOT NULL DEFAULT '{}',
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ai_workflows (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pluginCode TEXT NOT NULL,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  definitionJson TEXT NOT NULL,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  UNIQUE(pluginCode, code)
+);
+
+CREATE TABLE IF NOT EXISTS ai_workflow_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  runId TEXT NOT NULL UNIQUE,
+  pluginCode TEXT NOT NULL DEFAULT '',
+  workflowCode TEXT NOT NULL,
+  accountId INTEGER,
+  status TEXT NOT NULL DEFAULT 'running',
+  contextSnapshot TEXT NOT NULL DEFAULT '{}',
+  logs TEXT NOT NULL DEFAULT '[]',
+  startedAt TEXT NOT NULL,
+  finishedAt TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY (accountId) REFERENCES accounts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_workflow_runs_status ON ai_workflow_runs(status);
+
+CREATE TABLE IF NOT EXISTS hot_topics_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  platform TEXT NOT NULL,
+  title TEXT,
+  url TEXT,
+  mobilUrl TEXT,
+  thumbnail TEXT,
+  extra TEXT,
+  desc TEXT,
+  author TEXT,
+  hotValue TEXT,
+  hot_value TEXT,
+  rank INTEGER,
+  createdAt TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hot_topics_created_at ON hot_topics_history(createdAt);
+CREATE INDEX IF NOT EXISTS idx_hot_topics_platform ON hot_topics_history(platform);
 `;

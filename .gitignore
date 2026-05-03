@@ -4,3 +4,10 @@ dist-electron/
 release/
 .env
 *.log
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+.env*
+.vscode/
+.idea/
+out/

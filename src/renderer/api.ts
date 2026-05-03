@@ -1,4 +1,5 @@
-import type { Account, AppSetting, ConnectionTestResult, ContentItem, CreateAccountInput, CreateContentItemInput, CreatePostInput, DeleteAccountResult, DeletePostResult, DistributionTask, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateDistributionTaskInput } from '../shared/types';
+import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AppSetting, ConnectionTestResult, ContentItem, CreateAccountInput, CreateContentItemInput, CreatePostInput, DeleteAccountResult, DeletePostResult, DistributionTask, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateDistributionTaskInput } from '../shared/types';
+
 
 const httpBaseUrl = 'http://127.0.0.1:5183';
 
@@ -303,4 +304,64 @@ export const appApi = {
       return httpJson<void>('/app/relaunch', { method: 'POST' });
     },
   },
+  ai: {
+    generate: (options: AiGenerateOptions): Promise<AiResponse> => {
+      if (window.weiboPublisher?.ai) {
+        return window.weiboPublisher.ai.generate(options);
+      }
+      return httpJson<AiResponse>('/ai/generate', {
+        method: 'POST',
+        body: JSON.stringify(options),
+      });
+    },
+    generateImage: (options: AiImageOptions): Promise<{ url: string }> => {
+      if (window.weiboPublisher?.ai) {
+        return window.weiboPublisher.ai.generateImage(options);
+      }
+      return httpJson<{ url: string }>('/ai/generate-image', {
+        method: 'POST',
+        body: JSON.stringify(options),
+      });
+    },
+    listPlugins: (): Promise<AiPlugin[]> => {
+      if (window.weiboPublisher?.ai) {
+        return window.weiboPublisher.ai.listPlugins();
+      }
+      return httpJson<AiPlugin[]>('/ai/plugins');
+    },
+    listWorkflows: (pluginCode: string): Promise<AiWorkflow[]> => {
+      if (window.weiboPublisher?.ai) {
+        return window.weiboPublisher.ai.listWorkflows(pluginCode);
+      }
+      return httpJson<AiWorkflow[]>(`/ai/plugins/${pluginCode}/workflows`);
+    },
+    listHotTopics: async (): Promise<{ items: any[], lastFetchTime: string | null }> => {
+      if (window.weiboPublisher?.ai) {
+        return await window.weiboPublisher.ai.listHotTopics();
+      }
+      return await httpJson<{ items: any[], lastFetchTime: string | null }>('/ai/hot-topics');
+    },
+    previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any): Promise<{ runId: string }> => {
+      if (window.weiboPublisher?.ai) {
+        return window.weiboPublisher.ai.previewWorkflow(pluginCode, workflowCode, inputParams);
+      }
+      return httpJson<{ runId: string }>(`/ai/plugins/${pluginCode}/workflows/${workflowCode}/preview`, {
+        method: 'POST',
+        body: JSON.stringify(inputParams),
+      });
+    },
+    startAgentSchedule: (accountId: number): Promise<{ ok: boolean; message: string }> => {
+      if (window.weiboPublisher?.ai) {
+        return window.weiboPublisher.ai.startAgentSchedule(accountId);
+      }
+      return httpJson<{ ok: boolean; message: string }>(`/ai/agent/${accountId}/start`, { method: 'POST' });
+    },
+    onWorkflowLog: (callback: (log: any) => void): (() => void) => {
+      if (window.weiboPublisher?.ai) {
+        return window.weiboPublisher.ai.onWorkflowLog(callback);
+      }
+      return () => {};
+    },
+  },
 };
+

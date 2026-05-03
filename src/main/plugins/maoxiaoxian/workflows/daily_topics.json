@@ -1,0 +1,46 @@
+{
+  "workflowId": "maoxiaoxian.daily_topics",
+  "trigger": "auto",
+  "frequency": "1/day",
+  "settingsSchema": {
+    "targetPersona": { "type": "string", "description": "目标受众人群（如：年轻女性职场人）" },
+    "tone": { "type": "string", "description": "语气（如：神秘且温馨）" }
+  },
+  "steps": [
+    {
+      "id": "step1_fetch_hot",
+      "type": "tophub_search",
+      "nodeId": "KqndgxeLl9",
+      "outputKey": "hot_topics"
+    },
+    {
+      "id": "step2_extract_celeb",
+      "type": "llm",
+      "prompt": "从以下热搜中提取出讨论度最高的1个明星及其出生年月日。\n热搜数据：{{hot_topics}}\n请只返回 JSON 格式：{\"name\":\"xxx\", \"birthDate\":\"yyyy-mm-dd\"}",
+      "inputKey": "hot_topics",
+      "outputKey": "celeb_info",
+      "retryOnFailure": true,
+      "fallbackModel": "deepseek-coder"
+    },
+    {
+      "id": "step3_calc_bazi",
+      "type": "bazi_calc",
+      "birthDateKey": "celeb_info.birthDate",
+      "outputKey": "bazi_result"
+    },
+    {
+      "id": "step4_generate_post",
+      "type": "llm",
+      "prompt": "基于以下明星的八字和近期热搜，用{{tone}}的语气写一篇面向{{targetPersona}}的微博。\n明星：{{celeb_info.name}}\n八字结论：{{bazi_result.summary}}",
+      "inputKey": "bazi_result",
+      "outputKey": "final_post",
+      "fallbackModel": "deepseek-coder"
+    },
+    {
+      "id": "step5_persist",
+      "type": "persist",
+      "dataKey": "final_post",
+      "table": "content_items"
+    }
+  ]
+}

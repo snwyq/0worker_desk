@@ -14,6 +14,11 @@ import { PublishScheduler } from '../publisher/Scheduler.js';
 import { WeiboPublisher } from '../publisher/WeiboPublisher.js';
 import { listPlatformCapabilities } from '../platforms/registry.js';
 import { checkForUpdates, readUpdateConfig } from '../updater/UpdateService.js';
+import { aiService, type AiGenerateOptions, type AiImageOptions } from '../services/AiService.js';
+import { getWorkflowEngine } from '../core/workflow/EngineRegistry.js';
+import { ImageGenTool } from '../core/tools/ImageGenTool.js';
+import type { ITool } from '../core/tools/ITool.js';
+
 
 const { app, BrowserWindow, dialog, ipcMain } = electron;
 
@@ -316,7 +321,9 @@ function relaunchApp() {
 }
 
 export function registerIpcHandlers(repositories: AppDatabase, scheduler: PublishScheduler) {
+  aiService.init(repositories);
   ipcMain.handle('app:relaunch', () => relaunchApp());
+
   ipcMain.handle('accounts:list', () => repositories.accounts.list());
   ipcMain.handle('accounts:create', (_event, input: CreateAccountInput) => repositories.accounts.create(input));
   ipcMain.handle('accounts:update', (_event, id: number, input: UpdateAccountInput) => repositories.accounts.update(id, input));
@@ -365,6 +372,59 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   }));
   ipcMain.handle('updates:check', () => checkForUpdates(repositories));
   ipcMain.handle('helpDocs:get', () => readHelpDocs(process.cwd()));
+  ipcMain.handle('ai:generate', (_event, options: AiGenerateOptions) => aiService.generateText(options));
+  ipcMain.handle('ai:generateImage', (_event, options: AiImageOptions) => aiService.generateImage(options));
+
+  // AI Orchestrator Handlers
+  ipcMain.handle('ai:listPlugins', () => repositories.aiPlugins.list());
+  ipcMain.handle('ai:listWorkflows', (_event, pluginCode: string) => repositories.aiWorkflows.listByPlugin(pluginCode));
+  ipcMain.handle('ai:previewWorkflow_v3', async (event, pluginCode: string, workflowCode: string, inputParams: any) => {
+    return handlePreviewWorkflow(event, repositories, pluginCode, workflowCode, inputParams);
+  });
+  ipcMain.handle('ai:listHotTopics', () => aiService.fetchHotTopics());
+  ipcMain.handle('ai:startAgentSchedule', async (_event, accountId: number) => {
+    // In production, this would register a node-cron job or an interval.
+    return { ok: true, message: `Scheduled agent for account ${accountId}` };
+  });
+}
+
+
+async function handlePreviewWorkflow(event: any, repositories: AppDatabase, pluginCode: string, workflowCode: string, inputParams: any) {
+  const cleanPluginCode = (pluginCode || '').trim();
+  const cleanWorkflowCode = (workflowCode || '').trim();
+  console.log(`[AI-DEBUG] Preview Request: Plugin="${cleanPluginCode}", Workflow="${cleanWorkflowCode}"`);
+  
+  const engine = getWorkflowEngine();
+  let workflowRecord: any = null;
+  
+  if (cleanPluginCode === 'maoxiaoxian') {
+    workflowRecord = {
+      pluginCode: 'maoxiaoxian',
+      code: 'maoxiaoxian.daily_topics',
+      definitionJson: {
+        steps: [
+          { id: 'step1', type: 'bazi_calc', birthDateKey: 'userBirth', outputKey: 'baziResult' },
+          { id: 'step2', type: 'llm', prompt: '你是一个叫“猫小仙”的命理博主。请根据结果：{{state.baziResult.summary}} 写一条治愈系微博文案。', outputKey: 'finalContent' },
+          { id: 'step3', type: 'image_gen', prompt: '一张治愈系的插画，配合文字：{{state.finalContent}}', outputKey: 'imageUrl' }
+        ]
+      }
+    };
+  } else {
+    workflowRecord = repositories.aiWorkflows.findByCode(cleanPluginCode, cleanWorkflowCode);
+  }
+
+  if (!workflowRecord) throw new Error(`Workflow ${cleanWorkflowCode} not found`);
+  
+  return await engine.start(
+    { ...workflowRecord.definitionJson, pluginCode: workflowRecord.pluginCode, workflowId: workflowRecord.code },
+    null,
+    { userBirth: '1995-06-15 12:00:00', ...inputParams },
+    (log) => {
+      if (event?.sender) {
+        event.sender.send('ai:workflow-log', { runId: 'preview', ...log });
+      }
+    }
+  );
 }
 
 function readBody(request: http.IncomingMessage): Promise<unknown> {
@@ -625,7 +685,44 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
         return;
       }
 
+      if (request.method === 'GET' && request.url === '/ai/hot-topics') {
+        sendJson(request, response, 200, await aiService.fetchHotTopics());
+        return;
+      }
+
+      if (request.method === 'GET' && request.url === '/ai/plugins') {
+        sendJson(request, response, 200, repositories.aiPlugins.list());
+        return;
+      }
+
+      const workflowListMatch = request.url?.match(/^\/ai\/plugins\/([^\/]+)\/workflows$/);
+      if (request.method === 'GET' && workflowListMatch) {
+        sendJson(request, response, 200, repositories.aiWorkflows.listByPlugin(workflowListMatch[1]));
+        return;
+      }
+
+      const previewMatch = request.url?.match(/^\/ai\/plugins\/([^\/]+)\/workflows\/([^\/]+)\/preview$/);
+      if (request.method === 'POST' && previewMatch) {
+        const input = await readBody(request);
+        const runId = await handlePreviewWorkflow(null as any, repositories, previewMatch[1], previewMatch[2], input);
+        sendJson(request, response, 200, { runId });
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/ai/generate') {
+        const input = await readBody(request) as AiGenerateOptions;
+        sendJson(request, response, 200, await aiService.generateText(input));
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/ai/generate-image') {
+        const input = await readBody(request) as AiImageOptions;
+        sendJson(request, response, 200, { url: await aiService.generateImage(input) });
+        return;
+      }
+
       sendJson(request, response, 404, { error: 'Not found' });
+
     } catch (error) {
       sendJson(request, response, 500, { error: error instanceof Error ? error.message : String(error) });
     }
