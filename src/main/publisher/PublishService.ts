@@ -6,6 +6,7 @@ import { shouldPublishPost } from './PublishWorker.js';
 
 interface PublishOptions {
   ignoreSchedule?: boolean;
+  logPath?: string;
 }
 
 export async function publishPostNow(repositories: AppDatabase, postId: number, options: PublishOptions = {}): Promise<PublishNowResult> {
@@ -39,14 +40,18 @@ export async function publishPostNow(repositories: AppDatabase, postId: number, 
   try {
     repositories.posts.updateStatus(post.id, 'publishing');
     const browserInfo = await startAdsPowerBrowser(account, repositories);
-    const draft = await fillWeiboDraft(browserInfo, post);
+    const draft = await fillWeiboDraft(browserInfo, post, { logPath: options.logPath });
     if (!draft.ok) {
       repositories.posts.updateStatus(post.id, 'failed', draft.message);
       recordRun(repositories, post.id, 'failed', draft.message, startedAt);
       return { ok: false, message: draft.message, status: 'failed' };
     }
 
-    const result = await publishWeiboDraft(browserInfo);
+    const result = await publishWeiboDraft(browserInfo, {
+      hasMedia: post.mediaPaths.length > 0,
+      mediaCount: post.mediaPaths.length,
+      logPath: options.logPath,
+    });
     if (!result.ok) {
       repositories.posts.updateStatus(post.id, 'failed', result.message);
       recordRun(repositories, post.id, 'failed', result.message, startedAt);

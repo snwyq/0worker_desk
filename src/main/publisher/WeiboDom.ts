@@ -51,12 +51,132 @@ export function isSendReadyStable(options: {
   hasMedia: boolean;
   elapsedMs: number;
   consecutiveReadyPolls: number;
+  phase?: 'draft' | 'publish';
+  mediaCount?: number;
 }) {
   if (!options.hasMedia) {
     return options.consecutiveReadyPolls >= 1;
   }
 
-  return options.elapsedMs >= 15_000 && options.consecutiveReadyPolls >= 3;
+  if (options.phase === 'draft') {
+    return options.elapsedMs >= 5_000 && options.consecutiveReadyPolls >= 3;
+  }
+
+  return options.elapsedMs >= getWeiboMediaSettleMs(options.mediaCount ?? 1) && options.consecutiveReadyPolls >= 3;
+}
+
+export function getWeiboMediaSettleMs(mediaCount: number) {
+  if (mediaCount <= 1) {
+    return 8_000;
+  }
+
+  if (mediaCount === 2) {
+    return 12_000;
+  }
+
+  return 15_000;
+}
+
+export function getWeiboUploadBlockCooldownMs(mediaCount: number) {
+  return mediaCount <= 1 ? 6_000 : 10_000;
+}
+
+export function hasExpectedWeiboMediaReady(options: {
+  expectedMediaCount: number;
+  mediaPreviewCount: number;
+  mediaLoadingCount: number;
+  hasUploadingText: boolean;
+}) {
+  if (options.expectedMediaCount <= 0) {
+    return true;
+  }
+
+  return options.mediaPreviewCount >= options.expectedMediaCount
+    && options.mediaLoadingCount === 0
+    && !options.hasUploadingText;
+}
+
+export interface WeiboManualPublishState {
+  hasMedia: boolean;
+  clickCount: number;
+  currentText: string;
+  hasAnyBoxes: boolean;
+  hasLoading: boolean;
+  hasRenderableMedia: boolean;
+  mediaFallbackReady?: boolean;
+  hasUploadBlockingText: boolean;
+  sendButtonFound: boolean;
+  sendButtonDisabled: boolean;
+  consecutiveReadyPolls: number;
+  elapsedMs: number;
+}
+
+export type WeiboManualPublishDecision =
+  | { action: 'success'; reason: string }
+  | { action: 'click'; reason: string }
+  | { action: 'wait'; reason: string };
+
+export type WeiboRawRetryDecision = 'full-wait' | 'quick-retry' | 'stop';
+
+export function getWeiboRawRetryDecision(state: {
+  remainingText: string;
+  sendButtonDisabled: boolean;
+  hasUploadingText: boolean;
+}) {
+  if (!state.remainingText || state.sendButtonDisabled) {
+    return 'stop' satisfies WeiboRawRetryDecision;
+  }
+
+  if (state.hasUploadingText) {
+    return 'full-wait' satisfies WeiboRawRetryDecision;
+  }
+
+  return 'quick-retry' satisfies WeiboRawRetryDecision;
+}
+
+export function getWeiboManualPublishDecision(state: WeiboManualPublishState): WeiboManualPublishDecision {
+  if (state.clickCount > 0 && state.currentText === '') {
+    return { action: 'success', reason: 'Compose text was cleared after clicking send' };
+  }
+
+  if (state.hasMedia) {
+    if (!state.hasAnyBoxes) {
+      return { action: 'wait', reason: 'Media layout boxes are not visible yet' };
+    }
+
+    if (state.hasLoading) {
+      return { action: 'wait', reason: 'Media loading spinner is still visible' };
+    }
+
+    if (!state.hasRenderableMedia && !state.mediaFallbackReady) {
+      return { action: 'wait', reason: 'Media preview is not fully rendered yet' };
+    }
+  }
+
+  if (state.hasUploadBlockingText) {
+    return { action: 'wait', reason: 'Weibo still reports media upload or processing' };
+  }
+
+  if (!state.sendButtonFound) {
+    return { action: 'wait', reason: 'Send button was not found' };
+  }
+
+  if (state.sendButtonDisabled) {
+    return { action: 'wait', reason: 'Send button is disabled' };
+  }
+
+  if (!isSendReadyStable({
+    hasMedia: state.hasMedia,
+    elapsedMs: state.elapsedMs,
+    consecutiveReadyPolls: state.consecutiveReadyPolls,
+  })) {
+    return { action: 'wait', reason: 'Send button readiness is not stable yet' };
+  }
+
+  return {
+    action: 'click',
+    reason: state.hasMedia ? 'Send button is ready and media has settled' : 'Send button is ready',
+  };
 }
 
 export function isWeiboUploadInputElement(element: ElementSnapshot) {

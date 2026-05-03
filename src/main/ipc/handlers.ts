@@ -1,11 +1,12 @@
 import electron from 'electron';
 import http from 'node:http';
 import type { ConnectionTestResult, CreateAccountInput, CreateContentItemInput, CreatePostInput, DeleteAccountResult, DeletePostResult, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateDistributionTaskInput } from '../../shared/types.js';
-import { startAdsPowerBrowser } from '../browser/AdsPowerApi.js';
+import { fetchAdsPowerProfiles, startAdsPowerBrowser } from '../browser/AdsPowerApi.js';
 import { createConnectorForAccount } from '../browser/BrowserConnectorFactory.js';
 import { inspectFirstPage } from '../browser/RawCdpClient.js';
 import type { AppDatabase } from '../db/database.js';
 import { readHelpDocs } from '../docs/HelpDocsService.js';
+import { getWeiboPublisherLogPath } from '../publisher/WeiboDiagnostics.js';
 import { shouldPublishPost } from '../publisher/PublishWorker.js';
 import { publishPostNow } from '../publisher/PublishService.js';
 import { fillWeiboDraft } from '../publisher/RawWeiboPublisher.js';
@@ -14,7 +15,7 @@ import { WeiboPublisher } from '../publisher/WeiboPublisher.js';
 import { listPlatformCapabilities } from '../platforms/registry.js';
 import { checkForUpdates, readUpdateConfig } from '../updater/UpdateService.js';
 
-const { BrowserWindow, dialog, ipcMain } = electron;
+const { app, BrowserWindow, dialog, ipcMain } = electron;
 
 async function selectMediaFiles() {
   const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
@@ -190,7 +191,9 @@ async function attemptPublishPost(repositories: AppDatabase, postId: number): Pr
 
     const connector = createConnectorForAccount(account);
     const session = await connector.connect(account);
-    const result = await new WeiboPublisher().publish(session.browser, post);
+    const result = await new WeiboPublisher({
+      logPath: getWeiboPublisherLogPath(app.getPath('userData')),
+    }).publish(session.browser, post);
     await session.browser.close();
     repositories.posts.updateStatus(post.id, result.status, result.message, result.screenshotPath ?? '');
     recordRunForPost(repositories, post.id, result.status, result.message, startedAt, result.screenshotPath ?? '');
@@ -216,11 +219,64 @@ function deletePost(repositories: AppDatabase, postId: number): DeletePostResult
   };
 }
 
+async function openBrowser(repositories: AppDatabase, accountId: number): Promise<ConnectionTestResult> {
+  const account = repositories.accounts.findById(accountId);
+  if (!account) {
+    throw new Error(`Account ${accountId} was not found`);
+  }
+
+  // 调用启动逻辑
+  const result = await testAccountConnection(repositories, accountId);
+  return result;
+}
+
 function deleteAccount(repositories: AppDatabase, accountId: number): DeleteAccountResult {
   const deleted = repositories.accounts.delete(accountId);
   return {
     ok: deleted,
     message: deleted ? `Account ${accountId} was deleted` : `Account ${accountId} was not found or could not be deleted`,
+  };
+}
+
+async function syncAdsPowerAccounts(repositories: AppDatabase) {
+  const apiKey = repositories.settings.get('adspower.apiKey') || process.env.ADSPOWER_API_KEY;
+  if (!apiKey) {
+    throw new Error('AdsPower API Key is not configured in settings or environment');
+  }
+
+  const profiles = await fetchAdsPowerProfiles(apiKey);
+  const existingAccounts = repositories.accounts.list();
+  
+  let syncCount = 0;
+  for (const profile of profiles) {
+    const existing = existingAccounts.find(a => a.providerProfileId === profile.user_id && a.browserMode === 'adspower');
+    
+    if (!existing) {
+      repositories.accounts.create({
+        name: profile.name || `AdsPower ${profile.user_id}`,
+        platform: 'weibo', // 默认分配给微博，MVP阶段简化处理
+        browserMode: 'adspower',
+        providerProfileId: profile.user_id,
+        wsEndpoint: '',
+        debuggingPort: null,
+        status: 'active',
+        notes: `Synced from AdsPower. Group: ${profile.group_name || 'None'}`,
+      });
+      syncCount++;
+    } else if (existing.name !== profile.name) {
+      // 如果名称变了，更新一下
+      repositories.accounts.update(existing.id, {
+        ...existing,
+        name: profile.name
+      });
+    }
+  }
+  
+  return {
+    ok: true,
+    message: `Successfully synchronized ${profiles.length} profiles from AdsPower. Added ${syncCount} new accounts.`,
+    totalSynced: profiles.length,
+    newlyAdded: syncCount
   };
 }
 
@@ -254,17 +310,28 @@ function recordRunForPost(
   });
 }
 
+function relaunchApp() {
+  app.relaunch();
+  app.exit(0);
+}
+
 export function registerIpcHandlers(repositories: AppDatabase, scheduler: PublishScheduler) {
+  ipcMain.handle('app:relaunch', () => relaunchApp());
   ipcMain.handle('accounts:list', () => repositories.accounts.list());
   ipcMain.handle('accounts:create', (_event, input: CreateAccountInput) => repositories.accounts.create(input));
   ipcMain.handle('accounts:update', (_event, id: number, input: UpdateAccountInput) => repositories.accounts.update(id, input));
   ipcMain.handle('accounts:delete', (_event, accountId: number) => deleteAccount(repositories, accountId));
+  ipcMain.handle('accounts:sync-adspower', () => syncAdsPowerAccounts(repositories));
+  ipcMain.handle('accounts:open-browser', (_event, accountId: number) => openBrowser(repositories, accountId));
   ipcMain.handle('posts:list', () => repositories.posts.list());
   ipcMain.handle('posts:create', (_event, input: CreatePostInput) => repositories.posts.create(input));
   ipcMain.handle('posts:delete', (_event, postId: number) => deletePost(repositories, postId));
   ipcMain.handle('posts:due', () => repositories.posts.listDue(new Date().toISOString()));
   ipcMain.handle('posts:attemptPublish', (_event, postId: number) => attemptPublishPost(repositories, postId));
-  ipcMain.handle('posts:publishNow', (_event, postId: number) => publishPostNow(repositories, postId, { ignoreSchedule: true }));
+  ipcMain.handle('posts:publishNow', (_event, postId: number) => publishPostNow(repositories, postId, {
+    ignoreSchedule: true,
+    logPath: getWeiboPublisherLogPath(app.getPath('userData')),
+  }));
   ipcMain.handle('accounts:testConnection', (_event, accountId: number) => testAccountConnection(repositories, accountId));
   ipcMain.handle('media:selectFiles', () => selectMediaFiles());
   ipcMain.handle('scheduler:start', () => scheduler.start());
@@ -314,12 +381,19 @@ function readBody(request: http.IncomingMessage): Promise<unknown> {
 }
 
 function getAllowedOrigin(request: http.IncomingMessage) {
+  const origin = request.headers.origin;
+  
+  // 允许所有本地开发环境的 Origin
+  if (origin && (origin.startsWith('http://127.0.0.1:') || origin.startsWith('http://localhost:') || origin === 'null')) {
+    return origin;
+  }
+
   const configuredOrigins = currentHttpRepositories?.settings.get('http.allowedOrigins')
     ?.split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean) ?? ['http://127.0.0.1:5173', 'http://localhost:5173', 'null'];
-  const origin = request.headers.origin;
-  if (origin && (configuredOrigins.includes(origin) || (origin === 'null' && !configuredOrigins.includes('null')))) {
+    .map((o) => o.trim())
+    .filter(Boolean) ?? ['http://127.0.0.1:5173', 'http://localhost:5173'];
+    
+  if (origin && configuredOrigins.includes(origin)) {
     return origin;
   }
 
@@ -373,6 +447,17 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
       const testConnectionMatch = request.url?.match(/^\/accounts\/(\d+)\/test-connection$/);
       if (request.method === 'POST' && testConnectionMatch) {
         sendJson(request, response, 200, await testAccountConnection(repositories, Number(testConnectionMatch[1])));
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/accounts/sync-adspower') {
+        sendJson(request, response, 200, await syncAdsPowerAccounts(repositories));
+        return;
+      }
+
+      const openBrowserMatch = request.url?.match(/^\/accounts\/(\d+)\/open-browser$/);
+      if (request.method === 'POST' && openBrowserMatch) {
+        sendJson(request, response, 200, await openBrowser(repositories, Number(openBrowserMatch[1])));
         return;
       }
 
@@ -532,6 +617,11 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
 
       if (request.method === 'POST' && request.url === '/media/select-files') {
         sendJson(request, response, 200, await selectMediaFiles());
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/app/relaunch') {
+        relaunchApp();
         return;
       }
 

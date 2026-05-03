@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
     update: (id: number, input: UpdateAccountInput) => ipcRenderer.invoke('accounts:update', id, input),
     delete: (id: number) => ipcRenderer.invoke('accounts:delete', id),
     testConnection: (accountId: number) => ipcRenderer.invoke('accounts:testConnection', accountId),
+    syncAdsPower: () => ipcRenderer.invoke('accounts:sync-adspower'),
+    openBrowser: (accountId: number) => ipcRenderer.invoke('accounts:open-browser', accountId),
   },
   posts: {
     list: () => ipcRenderer.invoke('posts:list'),
@@ -61,5 +63,8 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
   },
   helpDocs: {
     get: () => ipcRenderer.invoke('helpDocs:get'),
+  },
+  app: {
+    relaunch: () => ipcRenderer.invoke('app:relaunch'),
   },
 });

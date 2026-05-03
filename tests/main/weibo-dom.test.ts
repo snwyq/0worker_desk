@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   getSendButtonStatusFromDom,
+  getWeiboMediaSettleMs,
+  getWeiboRawRetryDecision,
+  getWeiboUploadBlockCooldownMs,
+  hasExpectedWeiboMediaReady,
   hasWeiboUploadingText,
+  getWeiboManualPublishDecision,
   isSendReadyStable,
   isWeiboSendButtonElement,
   isWeiboUploadInputElement,
@@ -36,9 +41,147 @@ describe('Weibo DOM helpers', () => {
 
   it('requires media send readiness to stay stable before continuing', () => {
     expect(isSendReadyStable({ hasMedia: false, elapsedMs: 1000, consecutiveReadyPolls: 1 })).toBe(true);
-    expect(isSendReadyStable({ hasMedia: true, elapsedMs: 10_000, consecutiveReadyPolls: 3 })).toBe(false);
-    expect(isSendReadyStable({ hasMedia: true, elapsedMs: 16_000, consecutiveReadyPolls: 2 })).toBe(false);
-    expect(isSendReadyStable({ hasMedia: true, elapsedMs: 16_000, consecutiveReadyPolls: 3 })).toBe(true);
+    expect(isSendReadyStable({ hasMedia: true, elapsedMs: 7000, consecutiveReadyPolls: 3 })).toBe(false);
+    expect(isSendReadyStable({ hasMedia: true, elapsedMs: 9000, consecutiveReadyPolls: 2 })).toBe(false);
+    expect(isSendReadyStable({ hasMedia: true, elapsedMs: 9000, consecutiveReadyPolls: 3 })).toBe(true);
+    expect(isSendReadyStable({ hasMedia: true, elapsedMs: 6000, consecutiveReadyPolls: 3, phase: 'draft' })).toBe(true);
+  });
+
+  it('scales media settle and upload-block cooldown by media count', () => {
+    expect(getWeiboMediaSettleMs(1)).toBe(8000);
+    expect(getWeiboMediaSettleMs(2)).toBe(12000);
+    expect(getWeiboMediaSettleMs(3)).toBe(15000);
+    expect(isSendReadyStable({ hasMedia: true, elapsedMs: 9000, consecutiveReadyPolls: 3, mediaCount: 2 })).toBe(false);
+    expect(isSendReadyStable({ hasMedia: true, elapsedMs: 13_000, consecutiveReadyPolls: 3, mediaCount: 2 })).toBe(true);
+    expect(getWeiboUploadBlockCooldownMs(1)).toBe(6000);
+    expect(getWeiboUploadBlockCooldownMs(2)).toBe(10000);
+  });
+
+  it('requires all expected media previews before treating media as upload-ready', () => {
+    expect(hasExpectedWeiboMediaReady({
+      expectedMediaCount: 2,
+      mediaPreviewCount: 1,
+      mediaLoadingCount: 0,
+      hasUploadingText: false,
+    })).toBe(false);
+    expect(hasExpectedWeiboMediaReady({
+      expectedMediaCount: 2,
+      mediaPreviewCount: 2,
+      mediaLoadingCount: 1,
+      hasUploadingText: false,
+    })).toBe(false);
+    expect(hasExpectedWeiboMediaReady({
+      expectedMediaCount: 2,
+      mediaPreviewCount: 2,
+      mediaLoadingCount: 0,
+      hasUploadingText: false,
+    })).toBe(true);
+  });
+
+  it('keeps waiting after an upload-blocked click until media is really ready', () => {
+    expect(getWeiboManualPublishDecision({
+      hasMedia: true,
+      clickCount: 1,
+      currentText: 'hello',
+      hasAnyBoxes: true,
+      hasLoading: false,
+      hasRenderableMedia: false,
+      hasUploadBlockingText: false,
+      sendButtonFound: true,
+      sendButtonDisabled: false,
+      consecutiveReadyPolls: 5,
+      elapsedMs: 45_000,
+    })).toEqual({ action: 'wait', reason: 'Media preview is not fully rendered yet' });
+
+    expect(getWeiboManualPublishDecision({
+      hasMedia: true,
+      clickCount: 1,
+      currentText: 'hello',
+      hasAnyBoxes: true,
+      hasLoading: false,
+      hasRenderableMedia: true,
+      hasUploadBlockingText: true,
+      sendButtonFound: true,
+      sendButtonDisabled: false,
+      consecutiveReadyPolls: 5,
+      elapsedMs: 45_000,
+    })).toEqual({ action: 'wait', reason: 'Weibo still reports media upload or processing' });
+  });
+
+  it('clicks only after media preview and send readiness stay stable', () => {
+    const readyState = {
+      hasMedia: true,
+      clickCount: 0,
+      currentText: 'hello',
+      hasAnyBoxes: true,
+      hasLoading: false,
+      hasRenderableMedia: true,
+      hasUploadBlockingText: false,
+      sendButtonFound: true,
+      sendButtonDisabled: false,
+      elapsedMs: 45_000,
+    };
+
+    expect(getWeiboManualPublishDecision({
+      ...readyState,
+      consecutiveReadyPolls: 2,
+    })).toEqual({ action: 'wait', reason: 'Send button readiness is not stable yet' });
+
+    expect(getWeiboManualPublishDecision({
+      ...readyState,
+      consecutiveReadyPolls: 3,
+    })).toEqual({ action: 'click', reason: 'Send button is ready and media has settled' });
+  });
+
+  it('falls back to stable send readiness when Weibo uses an unknown uploaded-media DOM', () => {
+    expect(getWeiboManualPublishDecision({
+      hasMedia: true,
+      clickCount: 1,
+      currentText: 'hello',
+      hasAnyBoxes: true,
+      hasLoading: false,
+      hasRenderableMedia: false,
+      hasUploadBlockingText: false,
+      mediaFallbackReady: true,
+      sendButtonFound: true,
+      sendButtonDisabled: false,
+      consecutiveReadyPolls: 5,
+      elapsedMs: 60_000,
+    })).toEqual({ action: 'click', reason: 'Send button is ready and media has settled' });
+  });
+
+  it('treats cleared compose text after a click as publish success', () => {
+    expect(getWeiboManualPublishDecision({
+      hasMedia: true,
+      clickCount: 1,
+      currentText: '',
+      hasAnyBoxes: false,
+      hasLoading: false,
+      hasRenderableMedia: false,
+      hasUploadBlockingText: false,
+      sendButtonFound: false,
+      sendButtonDisabled: true,
+      consecutiveReadyPolls: 0,
+      elapsedMs: 50_000,
+    })).toEqual({ action: 'success', reason: 'Compose text was cleared after clicking send' });
+  });
+
+  it('backs off to full waiting when a raw send click reveals upload blocking text', () => {
+    expect(getWeiboRawRetryDecision({
+      remainingText: 'hello',
+      sendButtonDisabled: false,
+      hasUploadingText: true,
+    })).toBe('full-wait');
+    expect(getWeiboRawRetryDecision({
+      remainingText: 'hello',
+      sendButtonDisabled: false,
+      hasUploadingText: false,
+    })).toBe('quick-retry');
+    expect(getWeiboRawRetryDecision({
+      remainingText: '',
+      sendButtonDisabled: true,
+      hasUploadingText: false,
+    })).toBe('stop');
   });
 
   it('prefers media file inputs over unrelated file inputs', () => {

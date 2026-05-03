@@ -199,6 +199,7 @@ export async function createDatabase(filename: string) {
     upsertSetting('updates.owner', '', 'GitHub repository owner for releases.');
     upsertSetting('updates.repo', '', 'GitHub repository name for releases.');
     upsertSetting('ui.language', 'zh', 'Default interface language.');
+    upsertSetting('ui.enabledBrowserModes', 'adspower,manual_port,manual_ws', 'Comma-separated enabled browser modes shown in account creation.');
   });
 
   return {

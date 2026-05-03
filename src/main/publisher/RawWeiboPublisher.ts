@@ -2,9 +2,14 @@ import fs from 'node:fs';
 import type { Post } from '../../shared/types.js';
 import type { AdsPowerBrowserInfo } from '../browser/AdsPowerApi.js';
 import { RawCdpClient } from '../browser/RawCdpClient.js';
+import { normalizeWeiboPostText } from './WeiboContent.js';
+import { appendWeiboPublishLog } from './WeiboDiagnostics.js';
 import {
   getSendButtonStatusFromDom,
+  getWeiboUploadBlockCooldownMs,
+  getWeiboRawRetryDecision,
   hasWeiboUploadingText,
+  hasExpectedWeiboMediaReady,
   isSendReadyStable,
   isDisabledElement,
   isWeiboComposePlaceholder,
@@ -29,6 +34,33 @@ interface ButtonLocation {
   y?: number;
 }
 
+interface RawPublishOptions {
+  hasMedia?: boolean;
+  mediaCount?: number;
+  logPath?: string;
+}
+
+function createRawPublishLogger(logPath: string | undefined, label: string) {
+  const recent: string[] = [];
+  const log = async (message: string) => {
+    console.log(message);
+    recent.push(message);
+    if (recent.length > 12) {
+      recent.shift();
+    }
+    await appendWeiboPublishLog(logPath, `${label} ${message}`);
+  };
+  const suffix = () => {
+    const parts = [
+      logPath ? `日志文件: ${logPath}` : '',
+      recent.length ? `最后状态: ${recent.slice(-4).join(' || ')}` : '',
+    ].filter(Boolean);
+    return parts.length ? `。${parts.join('；')}` : '';
+  };
+
+  return { log, suffix };
+}
+
 async function findWeiboPage(debugPort: number): Promise<DebugTarget> {
   const response = await fetch(`http://127.0.0.1:${debugPort}/json`);
   if (!response.ok) {
@@ -46,19 +78,28 @@ async function findWeiboPage(debugPort: number): Promise<DebugTarget> {
   return page;
 }
 
-export async function fillWeiboDraft(browserInfo: AdsPowerBrowserInfo, post: Post) {
+export async function fillWeiboDraft(browserInfo: AdsPowerBrowserInfo, post: Post, options: RawPublishOptions = {}) {
   const page = await findWeiboPage(browserInfo.debugPort);
   const client = await RawCdpClient.connect(page.webSocketDebuggerUrl);
+  const diagnostics = createRawPublishLogger(options.logPath, `post=${post.id} draft`);
 
   try {
+    await diagnostics.log(`Connected to Weibo page for draft fill: ${page.title} ${page.url}`);
     await client.send('Runtime.enable');
     await client.send('DOM.enable');
 
-    const draftResult = await fillComposeText(client, post.content);
+    const draftResult = await fillComposeText(client, normalizeWeiboPostText(post.content));
+    await diagnostics.log(draftResult.message);
     const uploadResult = await uploadMediaFiles(client, post.mediaPaths);
+    if (uploadResult.uploaded > 0) {
+      await diagnostics.log(`Queued ${uploadResult.uploaded} media file(s) for upload`);
+    }
     const ready = await waitForSendReady(client, {
       hasMedia: uploadResult.uploaded > 0,
-      timeoutMs: uploadResult.uploaded > 0 ? 120_000 : 8_000,
+      mediaCount: uploadResult.uploaded,
+      timeoutMs: uploadResult.uploaded > 0 ? 45_000 : 8_000,
+      phase: 'draft',
+      log: diagnostics.log,
     });
 
     return {
@@ -68,6 +109,7 @@ export async function fillWeiboDraft(browserInfo: AdsPowerBrowserInfo, post: Pos
         draftResult.message,
         uploadResult.uploaded > 0 ? `uploaded ${uploadResult.uploaded} media file(s)` : '',
         ready.ok ? 'send button is ready' : ready.message,
+        diagnostics.suffix(),
       ].filter(Boolean).join('; '),
     };
   } finally {
@@ -184,26 +226,37 @@ async function readMediaInputSelector(client: RawCdpClient) {
   return result.result.value;
 }
 
-async function waitForSendReady(client: RawCdpClient, options: { hasMedia: boolean; timeoutMs: number }) {
+async function waitForSendReady(client: RawCdpClient, options: {
+  hasMedia: boolean;
+  mediaCount?: number;
+  timeoutMs: number;
+  phase?: 'draft' | 'publish';
+  log?: (message: string) => Promise<void>;
+}) {
   const started = Date.now();
   let consecutiveReadyPolls = 0;
+  let lastLogAt = 0;
   let last = {
     ok: false,
     message: 'Send button is not ready yet',
     remainingText: '',
     sendButtonDisabled: true,
     hasUploadingText: false,
+    mediaPreviewCount: 0,
+    mediaLoadingCount: 0,
   };
 
   while (Date.now() - started < options.timeoutMs) {
-    const status = await readSendStatus(client);
+    const status = await readSendStatus(client, options.mediaCount ?? 0);
     last = status;
     if (status.ok) {
       consecutiveReadyPolls += 1;
       if (isSendReadyStable({
         hasMedia: options.hasMedia,
+        mediaCount: options.mediaCount,
         elapsedMs: Date.now() - started,
         consecutiveReadyPolls,
+        phase: options.phase,
       })) {
         return {
           ...status,
@@ -215,6 +268,14 @@ async function waitForSendReady(client: RawCdpClient, options: { hasMedia: boole
     } else {
       consecutiveReadyPolls = 0;
     }
+    if (options.log && Date.now() - lastLogAt >= 5000) {
+      await options.log(
+        `Waiting raw send ready: ${status.message} | ready=${consecutiveReadyPolls}, `
+        + `remaining=${Boolean(status.remainingText)}, uploadText=${status.hasUploadingText}, disabled=${status.sendButtonDisabled}, `
+        + `media=${status.mediaPreviewCount}/${options.mediaCount ?? 0}, mediaLoading=${status.mediaLoadingCount}`,
+      );
+      lastLogAt = Date.now();
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
@@ -225,13 +286,15 @@ async function waitForSendReady(client: RawCdpClient, options: { hasMedia: boole
   };
 }
 
-async function readSendStatus(client: RawCdpClient) {
+async function readSendStatus(client: RawCdpClient, expectedMediaCount = 0) {
   const result = await client.send<{ result: { value: {
     ok: boolean;
     message: string;
     remainingText: string;
     sendButtonDisabled: boolean;
     hasUploadingText: boolean;
+    mediaPreviewCount: number;
+    mediaLoadingCount: number;
   } } }>('Runtime.evaluate', {
     expression: `(() => {
       ${weiboDomRuntimeHelpers()}
@@ -241,15 +304,25 @@ async function readSendStatus(client: RawCdpClient) {
       const pageText = document.body.innerText || '';
       const uploading = hasWeiboUploadingText(pageText);
       const sendStatus = getSendButtonStatusFromDom(toElementSnapshot(sendButton));
+      const mediaState = readWeiboMediaState();
+      const expectedMediaCount = ${JSON.stringify(expectedMediaCount)};
+      const mediaReady = hasExpectedWeiboMediaReady({
+        expectedMediaCount,
+        mediaPreviewCount: mediaState.previewCount,
+        mediaLoadingCount: mediaState.loadingCount,
+        hasUploadingText: uploading,
+      });
 
       return {
-        ok: Boolean(remainingText) && sendStatus.found && !sendStatus.disabled && !uploading,
+        ok: Boolean(remainingText) && sendStatus.found && !sendStatus.disabled && mediaReady,
         message: sendButton
           ? (sendStatus.disabled ? 'Send button is disabled' : 'Send button is enabled')
           : 'Send button was not found',
         remainingText,
         sendButtonDisabled: sendStatus.disabled,
         hasUploadingText: uploading,
+        mediaPreviewCount: mediaState.previewCount,
+        mediaLoadingCount: mediaState.loadingCount,
       };
     })()`,
     awaitPromise: true,
@@ -259,56 +332,137 @@ async function readSendStatus(client: RawCdpClient) {
   return result.result.value;
 }
 
-export async function publishWeiboDraft(browserInfo: AdsPowerBrowserInfo) {
+export async function publishWeiboDraft(browserInfo: AdsPowerBrowserInfo, options: RawPublishOptions = {}) {
   const page = await findWeiboPage(browserInfo.debugPort);
   const client = await RawCdpClient.connect(page.webSocketDebuggerUrl);
+  const diagnostics = createRawPublishLogger(options.logPath, 'raw-publish');
 
   try {
+    await diagnostics.log(`Connected to Weibo page for publish: ${page.title} ${page.url}`);
     await client.send('Runtime.enable');
 
-    const ready = await waitForSendReady(client, { hasMedia: false, timeoutMs: 60_000 });
+    const ready = await waitForSendReady(client, {
+      hasMedia: Boolean(options.hasMedia),
+      mediaCount: options.mediaCount ?? (options.hasMedia ? 1 : 0),
+      timeoutMs: options.hasMedia ? 10 * 60_000 : 60_000,
+      phase: 'publish',
+      log: diagnostics.log,
+    });
     if (!ready.ok) {
-      return { ok: false, message: ready.message, url: page.url, title: page.title };
+      return { ok: false, message: `${ready.message}${diagnostics.suffix()}`, url: page.url, title: page.title };
+    }
+
+    return await clickSendUntilPublished(client, {
+      hasMedia: Boolean(options.hasMedia),
+      mediaCount: options.mediaCount ?? (options.hasMedia ? 1 : 0),
+      timeoutMs: options.hasMedia ? 10 * 60_000 : 90_000,
+      log: diagnostics.log,
+      suffix: diagnostics.suffix,
+      page,
+    });
+  } finally {
+    client.close();
+  }
+}
+
+async function clickSendUntilPublished(client: RawCdpClient, options: {
+  hasMedia: boolean;
+  mediaCount: number;
+  timeoutMs: number;
+  log: (message: string) => Promise<void>;
+  suffix: () => string;
+  page: DebugTarget;
+}) {
+  const started = Date.now();
+  let clickCount = 0;
+
+  while (Date.now() - started < options.timeoutMs) {
+    const ready = await readSendStatus(client, options.mediaCount);
+    if (!ready.ok) {
+      await options.log(`Send not ready before click retry: ${ready.message}; uploadText=${ready.hasUploadingText}, disabled=${ready.sendButtonDisabled}`);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      continue;
     }
 
     const button = await locateSendButton(client);
     if (!button.ok || button.x === undefined || button.y === undefined) {
-      return button;
+      await options.log(`Send button cannot be clicked: ${button.message}`);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      continue;
     }
 
-    await client.send('Input.dispatchMouseEvent', {
-      type: 'mouseMoved',
-      x: button.x,
-      y: button.y,
-      button: 'none',
-    });
-    await client.send('Input.dispatchMouseEvent', {
-      type: 'mousePressed',
-      x: button.x,
-      y: button.y,
-      button: 'left',
-      clickCount: 1,
-    });
-    await client.send('Input.dispatchMouseEvent', {
-      type: 'mouseReleased',
-      x: button.x,
-      y: button.y,
-      button: 'left',
-      clickCount: 1,
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 3500));
+    clickCount += 1;
+    await options.log(`Dispatching raw send click attempt ${clickCount} at ${button.x},${button.y}`);
+    await dispatchRawClick(client, button.x, button.y);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
 
     const verify = await verifySendClick(client);
-    return {
-      ok: verify.ok,
-      message: verify.message,
-      url: button.url,
-      title: button.title,
-    };
-  } finally {
-    client.close();
+    await options.log(`Verify after click ${clickCount}: ${verify.message}; remaining=${Boolean(verify.remainingText)}, disabled=${verify.sendButtonDisabled}`);
+    if (verify.ok) {
+      return {
+        ok: true,
+        message: `${verify.message}${options.suffix()}`,
+        url: button.url,
+        title: button.title,
+      };
+    }
+
+    const retryDecision = getWeiboRawRetryDecision({
+      remainingText: verify.remainingText,
+      sendButtonDisabled: verify.sendButtonDisabled,
+      hasUploadingText: verify.hasUploadingText,
+    });
+    if (retryDecision === 'stop') {
+      return {
+        ok: true,
+        message: `${verify.message}${options.suffix()}`,
+        url: button.url,
+        title: button.title,
+      };
+    }
+    if (retryDecision === 'full-wait') {
+      const cooldownMs = getWeiboUploadBlockCooldownMs(options.mediaCount);
+      await options.log(`Upload blocking text appeared after click; cooling down ${cooldownMs}ms before full send-ready wait`);
+      await new Promise((resolve) => setTimeout(resolve, cooldownMs));
+      await waitForSendReady(client, {
+        hasMedia: options.hasMedia,
+        mediaCount: options.mediaCount,
+        timeoutMs: options.hasMedia ? 10 * 60_000 : 60_000,
+        phase: 'publish',
+        log: options.log,
+      });
+    }
   }
+
+  return {
+    ok: false,
+    message: `Send click did not complete after ${clickCount} attempt(s)${options.suffix()}`,
+    url: options.page.url,
+    title: options.page.title,
+  };
+}
+
+async function dispatchRawClick(client: RawCdpClient, x: number, y: number) {
+  await client.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x,
+    y,
+    button: 'none',
+  });
+  await client.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    x,
+    y,
+    button: 'left',
+    clickCount: 1,
+  });
+  await client.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    x,
+    y,
+    button: 'left',
+    clickCount: 1,
+  });
 }
 
 async function locateSendButton(client: RawCdpClient): Promise<ButtonLocation> {
@@ -348,21 +502,27 @@ async function verifySendClick(client: RawCdpClient) {
     message: string;
     remainingText: string;
     sendButtonDisabled: boolean;
+    hasUploadingText: boolean;
   } } }>('Runtime.evaluate', {
     expression: `(() => {
       ${weiboDomRuntimeHelpers()}
       const textarea = findComposeTextarea();
       const remainingText = (textarea?.value || '').trim();
       const sendButton = findSendButton();
+      const pageText = document.body.innerText || '';
       const sendButtonDisabled = getSendButtonStatusFromDom(toElementSnapshot(sendButton)).disabled;
+      const hasUploadingText = hasWeiboUploadingText(pageText);
 
       return {
-        ok: !remainingText || sendButtonDisabled,
-        message: !remainingText || sendButtonDisabled
+        ok: (!remainingText || sendButtonDisabled) && !hasUploadingText,
+        message: (!remainingText || sendButtonDisabled) && !hasUploadingText
           ? 'Send button clicked and compose box cleared or disabled'
-          : 'Send click did not clear compose box',
+          : hasUploadingText
+            ? 'Send click was blocked because media is still uploading'
+            : 'Send click did not clear compose box',
         remainingText,
         sendButtonDisabled,
+        hasUploadingText,
       };
     })()`,
     awaitPromise: true,
@@ -380,6 +540,7 @@ function weiboDomRuntimeHelpers() {
     const isDisabledElement = ${isDisabledElement.toString()};
     const getSendButtonStatusFromDom = ${getSendButtonStatusFromDom.toString()};
     const hasWeiboUploadingText = ${hasWeiboUploadingText.toString()};
+    const hasExpectedWeiboMediaReady = ${hasExpectedWeiboMediaReady.toString()};
     const isWeiboUploadInputElement = ${isWeiboUploadInputElement.toString()};
     const toElementSnapshot = (el) => el ? ({
       accept: el.getAttribute?.('accept') || '',
@@ -396,5 +557,48 @@ function weiboDomRuntimeHelpers() {
       ?? document.querySelector('textarea');
     const findSendButton = () => [...document.querySelectorAll('button, [role="button"]')]
       .find((el) => isWeiboSendButtonElement({ text: el.innerText || el.textContent || '' }));
+    const isVisibleElement = (el) => {
+      const rect = el.getBoundingClientRect?.();
+      const style = window.getComputedStyle(el);
+      return Boolean(rect && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden');
+    };
+    const readWeiboMediaState = () => {
+      const loadingSelectors = '.woo-icon-loading, .woo-spinner, .Pic_loading_13r6n, [class*="loading"], [class*="Loading"]';
+      const loadingCount = [...document.querySelectorAll(loadingSelectors)].filter(isVisibleElement).length;
+      const previewSelectors = [
+        '.woo-picture-img',
+        '.woo-picture-main',
+        '.woo-picture-slot',
+        '[class*="picture"]',
+        '[class*="Picture"]',
+        '[class*="media"]',
+        '[class*="Media"]',
+        'img[src^="blob:"]',
+        'img[src*="sinaimg.cn"]',
+        'img[src*="weibocdn.com"]',
+      ].join(',');
+      const previews = [...document.querySelectorAll(previewSelectors)]
+        .filter((el) => {
+          if (!isVisibleElement(el)) return false;
+          const text = (el.innerText || el.textContent || '').trim();
+          const style = window.getComputedStyle(el);
+          const backgroundImage = style.backgroundImage || '';
+          const src = el.getAttribute?.('src') || '';
+          const className = typeof el.className === 'string' ? el.className : '';
+          return src.startsWith('blob:')
+            || src.includes('sinaimg.cn')
+            || src.includes('weibocdn.com')
+            || backgroundImage.includes('blob:')
+            || backgroundImage.includes('sinaimg.cn')
+            || backgroundImage.includes('weibocdn.com')
+            || /picture|media|Picture|Media/.test(className)
+            || /删除|编辑|焦点/.test(text);
+        });
+      const uniquePreviewKeys = new Set(previews.map((el) => {
+        const rect = el.getBoundingClientRect();
+        return [Math.round(rect.left), Math.round(rect.top), Math.round(rect.width), Math.round(rect.height)].join(':');
+      }));
+      return { previewCount: uniquePreviewKeys.size, loadingCount };
+    };
   `;
 }

@@ -1,387 +1,155 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
-  Activity,
   Bell,
-  BookOpen,
-  Boxes,
-  ChevronDown,
-  CircleHelp,
   Cpu,
-  FileText,
-  Gauge,
-  PanelBottom,
+  LayoutDashboard,
+  LogOut,
+  Plus,
   Rocket,
   Search,
   Settings,
+  ShieldCheck,
+  UserCircle,
   Users,
-  X,
 } from 'lucide-react';
-import { AccountsPage } from './pages/AccountsPage';
-import { ContentPage } from './pages/ContentPage';
-import { HelpPage } from './pages/HelpPage';
 import { HomePage } from './pages/HomePage';
+import { AccountsPage } from './pages/AccountsPage';
 import { QueuePage } from './pages/QueuePage';
 import { SettingsPage } from './pages/SettingsPage';
 import {
   activateWorkspaceTab,
-  closeWorkspaceTab,
   createInitialWorkspace,
   openWorkspaceModule,
   type WorkspaceModule,
-  type WorkspaceModuleDefinition,
 } from './workspaceModel';
 
-const moduleDefinitions: WorkspaceModuleDefinition[] = [
-  {
-    id: 'dashboard',
-    label: '首页',
-    tooltip: '首页',
-    tab: {
-      id: 'dashboard-overview',
-      module: 'dashboard',
-      title: '首页',
-      subtitle: '今天要做的事都在这里',
-      pinned: true,
-    },
-    explorerTitle: '常用入口',
-    explorerGroups: [
-      {
-        title: '现在可以做',
-        items: [
-          { label: '写一篇新内容', meta: '新建', state: 'online' },
-          { label: '检查账号是否可用', meta: '12 个账号', state: 'processing' },
-          { label: '看看失败的发布', meta: '2 条提醒', state: 'warning' },
-        ],
-      },
-      {
-        title: '最近处理',
-        items: [
-          { label: '周报总结', meta: '待发布' },
-          { label: '微博账号检查', meta: '8 分钟前' },
-        ],
-      },
-    ],
-    component: HomePage,
-  },
-  {
-    id: 'content',
-    label: '写内容',
-    tooltip: '写内容',
-    tab: {
-      id: 'content-writing',
-      module: 'content',
-      title: '写内容',
-      subtitle: '写一篇内容，再改成适合不同账号发布的版本',
-    },
-    explorerTitle: '内容列表',
-    explorerGroups: [
-      {
-        title: '按状态看',
-        items: [
-          { label: '收集箱', meta: '8' },
-          { label: '草稿', meta: '未完成' },
-          { label: '已发布', meta: '存档' },
-        ],
-      },
-      {
-        title: '按类型看',
-        items: [
-          { label: '行业观察', meta: '标签' },
-          { label: '产品更新', meta: '标签' },
-          { label: '复盘总结', meta: '标签' },
-        ],
-      },
-    ],
-    component: ContentPage,
-  },
-  {
-    id: 'accounts',
-    label: '账号管理',
-    tooltip: '账号管理',
-    tab: {
-      id: 'accounts-matrix',
-      module: 'accounts',
-      title: '账号管理',
-      subtitle: '管理要发布内容的平台账号',
-    },
-    explorerTitle: '账号分类',
-    explorerGroups: [
-      {
-        title: '平台',
-        items: [
-          { label: '微博', meta: '可用', state: 'online' },
-          { label: '小红书', meta: '准备中' },
-          { label: '抖音', meta: '准备中' },
-        ],
-      },
-      {
-        title: '账号状态',
-        items: [
-          { label: '正常可用', meta: '绿色', state: 'online' },
-          { label: '登录失效', meta: '需要处理', state: 'warning' },
-        ],
-      },
-    ],
-    component: AccountsPage,
-  },
-  {
-    id: 'distribution',
-    label: '发布任务',
-    tooltip: '发布任务',
-    tab: {
-      id: 'distribution-runs',
-      module: 'distribution',
-      title: '发布任务',
-      subtitle: '查看哪些内容待发布、已发布或需要人工处理',
-    },
-    explorerTitle: '任务列表',
-    explorerGroups: [
-      {
-        title: '发布进度',
-        items: [
-          { label: '正在排队', meta: '进行中', state: 'processing' },
-          { label: '发布记录', meta: '历史' },
-          { label: '定时发布', meta: '计划' },
-        ],
-      },
-    ],
-    component: QueuePage,
-  },
-  {
-    id: 'settings',
-    label: '设置',
-    tooltip: '设置',
-    tab: {
-      id: 'settings-engine',
-      module: 'settings',
-      title: '设置',
-      subtitle: '语言、网络、账号连接和更新设置',
-    },
-    explorerTitle: '设置项',
-    explorerGroups: [
-      {
-        title: '基础设置',
-        items: [
-          { label: '工作区与主题' },
-          { label: '网络与代理' },
-          { label: 'AI 服务设置' },
-        ],
-      },
-    ],
-    component: SettingsPage,
-  },
-  {
-    id: 'help',
-    label: '帮助',
-    tooltip: '帮助',
-    tab: {
-      id: 'help-docs',
-      module: 'help',
-      title: '帮助',
-      subtitle: '查看使用说明和常见问题',
-    },
-    explorerTitle: '帮助目录',
-    explorerGroups: [
-      {
-        title: '文档',
-        items: [
-          { label: '怎么开始使用' },
-          { label: '怎么升级软件' },
-          { label: '怎么接入平台账号' },
-        ],
-      },
-    ],
-    component: HelpPage,
-  },
-];
-
-const moduleIcons: Record<WorkspaceModule, typeof Gauge> = {
-  dashboard: Gauge,
-  content: FileText,
-  accounts: Users,
-  distribution: Rocket,
-  settings: Settings,
-  help: CircleHelp,
-};
+const mainNavItems = [
+  { id: 'home', label: '控制中心', icon: LayoutDashboard },
+  { id: 'accounts', label: '账号矩阵', icon: Users },
+  { id: 'distribution', label: '发布调度', icon: Rocket },
+  { id: 'settings', label: '系统设置', icon: Settings },
+] as const;
 
 export function App() {
   const [workspace, setWorkspace] = useState(createInitialWorkspace);
-  const [terminalOpen, setTerminalOpen] = useState(true);
-  const activeDefinition = moduleDefinitions.find((item) => item.id === workspace.activeModule) ?? moduleDefinitions[0];
-  const activeTab = workspace.tabs.find((tab) => tab.id === workspace.activeTabId) ?? workspace.tabs[0];
-  const activeTabDefinition = moduleDefinitions.find((item) => item.id === activeTab.module) ?? moduleDefinitions[0];
-  const ActiveCanvas = activeTabDefinition.component;
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const activeModule = workspace.activeModule;
   const bridgeLabel = window.weiboPublisher ? '桌面端已连接' : '本地服务已连接';
-  const primaryModules = moduleDefinitions.filter((item) => !['settings', 'help'].includes(item.id));
-  const utilityModules = moduleDefinitions.filter((item) => ['settings', 'help'].includes(item.id));
-  const terminalLines = useMemo(
-    () => [
-      '[状态] 软件已启动，可以开始使用',
-      '[发布] 暂无正在发布的任务',
-      `[连接] ${bridgeLabel}`,
-      '[提醒] 有问题的账号或任务会显示在这里',
-    ],
-    [bridgeLabel],
-  );
 
   function openModule(module: WorkspaceModule) {
     setWorkspace((current) => openWorkspaceModule(current, module));
   }
 
+  const renderContent = () => {
+    switch (activeModule) {
+      case 'home': return <HomePage />;
+      case 'accounts': return <AccountsPage />;
+      case 'distribution': return <QueuePage />;
+      case 'settings': return <SettingsPage />;
+      default: return <HomePage />;
+    }
+  };
+
   return (
-    <main className="ide-shell">
-      <header className="title-bar">
-        <div className="workspace-mark">
-          <Boxes size={16} />
-          <span>0Worker Desk</span>
-          <strong>帮你把一篇内容发到多个平台</strong>
+    <div className="tw-flex tw-h-screen tw-bg-slate-50 tw-text-slate-900 tw-font-sans">
+      {/* Sidebar */}
+      <aside className="tw-w-64 tw-bg-white tw-border-r tw-border-slate-200 tw-flex tw-flex-col tw-z-10">
+        <div className="tw-p-6 tw-flex tw-items-center tw-gap-3">
+          <div className="tw-w-10 tw-h-10 tw-bg-brand-500 tw-rounded-xl tw-flex tw-items-center tw-justify-center tw-text-white tw-shadow-lg tw-shadow-brand-200">
+            <LayoutDashboard size={22} />
+          </div>
+          <span className="tw-font-bold tw-text-xl tw-tracking-tight">0Worker</span>
         </div>
-        <label className="command-center">
-          <Search size={15} />
-          <input aria-label="搜索内容、账号或任务" placeholder="搜索内容、账号或发布任务..." />
-        </label>
-        <div className="title-actions">
-          <span className="engine-pill">
-            <span className="status-dot online" />
-            {bridgeLabel}
-          </span>
-          <button className="icon-button" type="button" title="提醒" aria-label="提醒">
-            <Bell size={16} />
-          </button>
-          <button className="icon-button" type="button" title="连接状态" aria-label="连接状态">
-            <Cpu size={16} />
-          </button>
-        </div>
-      </header>
 
-      <aside className="activity-bar" aria-label="主要功能">
-        <nav className="activity-group">
-          {primaryModules.map((item) => {
-            const Icon = moduleIcons[item.id];
+        <nav className="tw-flex-1 tw-px-4 tw-space-y-1">
+          <div className="tw-text-[11px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-wider tw-px-3 tw-mb-2 tw-mt-4">
+            核心工作区
+          </div>
+          {mainNavItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeModule === item.id;
             return (
               <button
-                aria-label={item.label}
-                className={item.id === workspace.activeModule ? 'activity-button active' : 'activity-button'}
                 key={item.id}
-                onClick={() => openModule(item.id)}
-                title={item.tooltip}
-                type="button"
+                onClick={() => openModule(item.id as WorkspaceModule)}
+                className={`tw-w-full tw-relative tw-flex tw-items-center tw-gap-4 tw-px-6 tw-py-4 tw-rounded-2xl tw-transition-all tw-duration-300 tw-group ${
+                  isActive 
+                  ? 'tw-bg-slate-900 tw-text-white tw-shadow-xl tw-shadow-slate-200' 
+                  : 'tw-text-slate-400 hover:tw-bg-slate-50 hover:tw-text-slate-600'
+                }`}
               >
-                <Icon size={20} />
+                {isActive && (
+                  <div className="tw-absolute tw-left-0 tw-top-1/2 tw--translate-y-1/2 tw-w-1 tw-h-6 tw-bg-brand-500 tw-rounded-r-full tw-shadow-[0_0_8px_rgba(14,141,233,0.8)]" />
+                )}
+                <Icon size={20} className={`tw-transition-transform tw-duration-500 ${isActive ? 'tw-scale-110' : 'group-hover:tw-scale-110'}`} />
+                <span className="tw-text-sm tw-font-bold tw-tracking-wide">{item.label}</span>
               </button>
             );
           })}
         </nav>
-        <nav className="activity-group utility">
-          {utilityModules.map((item) => {
-            const Icon = moduleIcons[item.id];
-            return (
-              <button
-                aria-label={item.label}
-                className={item.id === workspace.activeModule ? 'activity-button active' : 'activity-button'}
-                key={item.id}
-                onClick={() => openModule(item.id)}
-                title={item.tooltip}
-                type="button"
-              >
-                <Icon size={20} />
-              </button>
-            );
-          })}
-        </nav>
-      </aside>
 
-      <aside className="explorer-panel">
-        <div className="explorer-head">
-          <span>{activeDefinition.explorerTitle}</span>
-          <ChevronDown size={14} />
-        </div>
-        <div className="explorer-body">
-          {activeDefinition.explorerGroups.map((group) => (
-            <section className="explorer-group" key={group.title}>
-              <h2>{group.title}</h2>
-              {group.items.map((item) => (
-                <button className="explorer-row" key={`${group.title}-${item.label}`} type="button">
-                  {item.state && <span className={`status-dot ${item.state}`} />}
-                  <span>{item.label}</span>
-                  {item.meta && <code>{item.meta}</code>}
-                </button>
-              ))}
-            </section>
-          ))}
-        </div>
-      </aside>
-
-      <section className="editor-area">
-        <div className="tab-strip" role="tablist" aria-label="已打开页面">
-          {workspace.tabs.map((tab) => (
-            <button
-              className={tab.id === workspace.activeTabId ? 'editor-tab active' : 'editor-tab'}
-              key={tab.id}
-              onClick={() => setWorkspace((current) => activateWorkspaceTab(current, tab.id))}
-              role="tab"
-              type="button"
-            >
-              <span>{tab.title}</span>
-              {!tab.pinned && (
-                <X
-                  aria-hidden="true"
-                  size={13}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setWorkspace((current) => closeWorkspaceTab(current, tab.id));
-                  }}
-                />
-              )}
-            </button>
-          ))}
-        </div>
-
-        <div className="canvas-toolbar">
-          <div>
-            <p>{activeTab.subtitle}</p>
-            <h1>{activeTab.title}</h1>
-          </div>
-          <div className="toolbar-actions">
-            <button className="ghost-button" type="button">
-              <Activity size={15} />
-              查看记录
-            </button>
-            <button className="primary-button" type="button">
-              <Rocket size={15} />
-              加入发布
-            </button>
-          </div>
-        </div>
-
-        <div className="canvas-scroll">
-          <ActiveCanvas />
-        </div>
-
-        <section className={terminalOpen ? 'terminal-panel open' : 'terminal-panel'}>
-          <button className="terminal-toggle" type="button" onClick={() => setTerminalOpen((value) => !value)}>
-            <PanelBottom size={15} />
-            <span>运行信息</span>
-          </button>
-          {terminalOpen && (
-            <div className="terminal-content">
-              <div className="terminal-tabs">
-                <button className="active" type="button">运行信息</button>
-                <button type="button">发布队列</button>
-                <button type="button">提醒</button>
+        <div className="tw-p-4 tw-mt-auto">
+          <div className="tw-bg-slate-50 tw-rounded-2xl tw-p-4 tw-border tw-border-slate-100">
+            <div className="tw-flex tw-items-center tw-gap-3 tw-mb-3">
+              <div className="tw-relative">
+                <div className="tw-w-10 tw-h-10 tw-bg-slate-200 tw-rounded-full tw-overflow-hidden">
+                  <UserCircle size={40} className="tw-text-slate-400" />
+                </div>
+                <div className="tw-absolute tw-bottom-0 tw-right-0 tw-w-3 tw-h-3 tw-bg-green-500 tw-border-2 tw-border-white tw-rounded-full" />
               </div>
-              <pre>{terminalLines.join('\n')}</pre>
+              <div className="tw-flex-1 tw-min-w-0">
+                <div className="tw-text-sm tw-font-bold tw-truncate">管理员</div>
+                <div className="tw-text-[11px] tw-text-slate-500">专业版已激活</div>
+              </div>
             </div>
-          )}
-        </section>
-      </section>
+            <button className="tw-w-full tw-py-2 tw-text-[12px] tw-font-semibold tw-text-slate-500 hover:tw-text-red-500 tw-flex tw-items-center tw-justify-center tw-gap-2 tw-transition-colors">
+              <LogOut size={14} />
+              退出登录
+            </button>
+          </div>
+        </div>
+      </aside>
 
-      <footer className="status-bar">
-        <span><span className="status-dot online" /> {bridgeLabel}</span>
-        <span>网络正常</span>
-        <span>AI 服务可用</span>
-        <span><BookOpen size={13} /> 当前工作区：默认</span>
-      </footer>
-    </main>
+      {/* Main Content */}
+      <main className="tw-flex-1 tw-flex tw-flex-col tw-overflow-hidden">
+        {/* Header */}
+        <header className="tw-h-20 tw-bg-white/80 tw-backdrop-blur-md tw-border-b tw-border-slate-100 tw-px-8 tw-flex tw-items-center tw-justify-between tw-z-10">
+          <div className="tw-relative tw-w-96">
+            <Search className="tw-absolute tw-left-4 tw-top-1/2 tw--translate-y-1/2 tw-text-slate-400" size={18} />
+            <input
+              type="text"
+              placeholder="搜索账号、任务或内容..."
+              className="tw-w-full tw-pl-12 tw-pr-4 tw-py-2.5 tw-bg-slate-50 tw-border-none tw-rounded-xl tw-text-sm focus:tw-ring-2 focus:tw-ring-brand-500/20 tw-transition-all"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          <div className="tw-flex tw-items-center tw-gap-4">
+            <div className="tw-flex tw-items-center tw-gap-2 tw-px-3 tw-py-1.5 tw-bg-green-50 tw-rounded-lg tw-border tw-border-green-100">
+              <ShieldCheck size={14} className="tw-text-green-500" />
+              <span className="tw-text-[12px] tw-font-medium tw-text-green-700">{bridgeLabel}</span>
+            </div>
+            <button className="tw-p-2.5 tw-text-slate-500 hover:tw-bg-slate-50 tw-rounded-xl tw-transition-colors tw-relative">
+              <Bell size={20} />
+              <span className="tw-absolute tw-top-2 tw-right-2 tw-w-2 tw-h-2 tw-bg-red-500 tw-border-2 tw-border-white tw-rounded-full" />
+            </button>
+            <button className="tw-p-2.5 tw-text-slate-500 hover:tw-bg-slate-50 tw-rounded-xl tw-transition-colors">
+              <Cpu size={20} />
+            </button>
+          </div>
+        </header>
+
+        {/* Content Area */}
+        <div className="tw-flex-1 tw-overflow-y-auto tw-p-8">
+          <div className="tw-max-w-7xl tw-mx-auto">
+            <div className="tw-animate-fade-in">
+              {renderContent()}
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
   );
 }

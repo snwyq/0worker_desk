@@ -54,3 +54,42 @@ export async function startAdsPowerBrowser(account: Account, repositories?: AppD
 
   return { cdpEndpoint, debugPort };
 }
+
+export interface AdsPowerProfile {
+  user_id: string;
+  name: string;
+  serial_number: string;
+  group_name?: string;
+  status?: string;
+}
+
+interface AdsPowerListResponse {
+  code: number;
+  msg?: string;
+  data?: {
+    list: AdsPowerProfile[];
+    total: number;
+  };
+}
+
+export async function fetchAdsPowerProfiles(apiKey: string): Promise<AdsPowerProfile[]> {
+  const url = new URL('http://127.0.0.1:50325/api/v1/user/list');
+  url.searchParams.set('page_size', '100'); // 默认获取前100个，后续可增加分页逻辑
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`AdsPower list request failed with HTTP ${response.status}`);
+  }
+
+  const body = (await response.json()) as AdsPowerListResponse;
+  if (body.code !== 0) {
+    throw new Error(`AdsPower list failed: ${body.msg ?? body.code}`);
+  }
+
+  return body.data?.list ?? [];
+}

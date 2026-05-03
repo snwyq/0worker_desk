@@ -1,6 +1,4 @@
-import type { ComponentType } from 'react';
-
-export type WorkspaceModule = 'dashboard' | 'content' | 'accounts' | 'distribution' | 'settings' | 'help';
+export type WorkspaceModule = 'home' | 'accounts' | 'distribution' | 'settings';
 
 export interface WorkspaceTab {
   id: string;
@@ -16,69 +14,41 @@ export interface WorkspaceState {
   tabs: WorkspaceTab[];
 }
 
-export interface WorkspaceModuleDefinition {
-  id: WorkspaceModule;
-  label: string;
-  tooltip: string;
-  tab: WorkspaceTab;
-  explorerTitle: string;
-  explorerGroups: Array<{
-    title: string;
-    items: Array<{
-      label: string;
-      meta?: string;
-      state?: 'online' | 'processing' | 'warning' | 'idle';
-    }>;
-  }>;
-  component: ComponentType;
-}
-
 export const moduleTabs: Record<WorkspaceModule, WorkspaceTab> = {
-  dashboard: {
-    id: 'dashboard-overview',
-    module: 'dashboard',
-    title: '首页',
-    subtitle: '今天要做的事都在这里',
+  home: {
+    id: 'dashboard',
+    module: 'home',
+    title: '控制中心',
+    subtitle: '查看整体运行状态',
     pinned: true,
-  },
-  content: {
-    id: 'content-writing',
-    module: 'content',
-    title: '写内容',
-    subtitle: '写一篇内容，再改成适合不同账号发布的版本',
   },
   accounts: {
     id: 'accounts-matrix',
     module: 'accounts',
-    title: '账号管理',
+    title: '账号矩阵',
     subtitle: '管理要发布内容的平台账号',
+    pinned: true,
   },
   distribution: {
     id: 'distribution-runs',
     module: 'distribution',
-    title: '发布任务',
+    title: '发布调度',
     subtitle: '查看哪些内容待发布、已发布或需要人工处理',
   },
   settings: {
     id: 'settings-engine',
     module: 'settings',
-    title: '设置',
+    title: '系统设置',
     subtitle: '语言、网络、账号连接和更新设置',
-  },
-  help: {
-    id: 'help-docs',
-    module: 'help',
-    title: '帮助',
-    subtitle: '查看使用说明和常见问题',
   },
 };
 
 export function createInitialWorkspace(): WorkspaceState {
-  const dashboardTab = moduleTabs.dashboard;
+  const homeTab = moduleTabs.home;
   return {
-    activeModule: dashboardTab.module,
-    activeTabId: dashboardTab.id,
-    tabs: [dashboardTab],
+    activeModule: homeTab.module,
+    activeTabId: homeTab.id,
+    tabs: [homeTab],
   };
 }
 
@@ -114,7 +84,7 @@ export function closeWorkspaceTab(workspace: WorkspaceState, tabId: string): Wor
 
   const closingIndex = workspace.tabs.findIndex((tab) => tab.id === tabId);
   const nextTabs = workspace.tabs.filter((tab) => tab.id !== tabId);
-  const fallbackTab = nextTabs[Math.max(0, closingIndex - 1)] ?? nextTabs[0] ?? moduleTabs.dashboard;
+  const fallbackTab = nextTabs[Math.max(0, closingIndex - 1)] ?? nextTabs[0] ?? moduleTabs.accounts;
 
   return {
     activeModule: fallbackTab.module,

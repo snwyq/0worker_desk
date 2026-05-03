@@ -61,6 +61,22 @@ export const appApi = {
         method: 'POST',
       });
     },
+    syncAdsPower: (): Promise<{ ok: boolean; message: string; totalSynced: number; newlyAdded: number }> => {
+      if (window.weiboPublisher) {
+        return window.weiboPublisher.accounts.syncAdsPower();
+      }
+      return httpJson<{ ok: boolean; message: string; totalSynced: number; newlyAdded: number }>('/accounts/sync-adspower', {
+        method: 'POST',
+      });
+    },
+    openBrowser: (accountId: number): Promise<ConnectionTestResult> => {
+      if (window.weiboPublisher) {
+        return window.weiboPublisher.accounts.openBrowser(accountId);
+      }
+      return httpJson<ConnectionTestResult>(`/accounts/${accountId}/open-browser`, {
+        method: 'POST',
+      });
+    },
   },
   posts: {
     list: (): Promise<Post[]> => {
@@ -277,6 +293,14 @@ export const appApi = {
         return window.weiboPublisher.helpDocs.get();
       }
       return httpJson<{ userGuide: string; updateGuide: string; releaseNotes: string }>('/help-docs');
+    },
+  },
+  app: {
+    relaunch: (): Promise<void> => {
+      if (window.weiboPublisher?.app) {
+        return window.weiboPublisher.app.relaunch();
+      }
+      return httpJson<void>('/app/relaunch', { method: 'POST' });
     },
   },
 };
