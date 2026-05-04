@@ -392,6 +392,9 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   ipcMain.handle('ai:copyStyleToAccounts', (_event, id: string, input: CopyContentStyleInput) => (
     repositories.contentStyles.copyToAccounts(id, input.targetAccountIds, input.nameSuffix)
   ));
+  ipcMain.handle('ai:deleteStyle', (_event, id: string) => ({
+    ok: repositories.contentStyles.delete(id),
+  }));
   ipcMain.handle('ai:listWorkflows', (_event, pluginCode: string) => repositories.aiWorkflows.listByPlugin(pluginCode));
   ipcMain.handle('ai:startWorkflowRun', async (event, input: StartWorkflowRunInput) => (
     startWorkflowRun(event, repositories, input)
@@ -454,13 +457,14 @@ async function rewriteReviewItem(
     const generated = await service.generateText({ prompt, model: 'qwen-turbo', maxTokens: 800 });
     const nextBody = generated.content.trim();
     if (!nextBody) {
-      return review;
+      return repositories.reviewItems.setRewriteError(id, 'AI 未返回可用的重写结果，请调整要求后重试。');
     }
 
     return repositories.reviewItems.applyRewrite(id, reviewerId, comment, nextBody);
   } catch (error) {
     console.warn('[review-rewrite] AI rewrite failed; review item remains in rewriting state.', error);
-    return review;
+    const message = error instanceof Error ? error.message : String(error);
+    return repositories.reviewItems.setRewriteError(id, message);
   }
 }
 
@@ -780,6 +784,11 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
       if (request.method === 'PUT' && styleMatch) {
         const input = await readBody(request) as UpdateContentStyleInput;
         sendJson(request, response, 200, repositories.contentStyles.update(decodeURIComponent(styleMatch[1]), input));
+        return;
+      }
+
+      if (request.method === 'DELETE' && styleMatch) {
+        sendJson(request, response, 200, { ok: repositories.contentStyles.delete(decodeURIComponent(styleMatch[1])) });
         return;
       }
 

@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
     createStyle: (input: CreateContentStyleInput) => ipcRenderer.invoke('ai:createStyle', input),
     updateStyle: (id: string, input: UpdateContentStyleInput) => ipcRenderer.invoke('ai:updateStyle', id, input),
     copyStyleToAccounts: (id: string, input: CopyContentStyleInput) => ipcRenderer.invoke('ai:copyStyleToAccounts', id, input),
+    deleteStyle: (id: string) => ipcRenderer.invoke('ai:deleteStyle', id),
     listWorkflows: (pluginCode: string) => ipcRenderer.invoke('ai:listWorkflows', pluginCode),
     startWorkflowRun: (input: any) => ipcRenderer.invoke('ai:startWorkflowRun', input),
     getWorkflowRun: (runId: string) => ipcRenderer.invoke('ai:getWorkflowRun', runId),

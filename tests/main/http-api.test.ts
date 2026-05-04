@@ -656,6 +656,68 @@ describe('http api', () => {
     expect(db.distributionTasks.list()).toHaveLength(0);
   });
 
+  test('records rewrite failure details through the local api when model generation fails', async () => {
+    const db = await createDatabase(':memory:');
+    db.settings.set('ai.dashscopeKey', '');
+    db.settings.set('ai.apiyiKey', '');
+    db.settings.set('ai.apiYiKey', '');
+    const account = db.accounts.create({
+      name: 'review rewrite failure account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+      activePluginCode: 'maoxiaoxian',
+    });
+    const content = db.contentItems.create({
+      title: 'Rewrite failure content',
+      body: 'Original content waiting for rewrite.',
+      source: 'ai',
+      status: 'reviewing',
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: 'mx_healing_emotion',
+    });
+    const review = db.reviewItems.create({
+      contentId: content.id,
+      reviewMode: 'manual',
+      status: 'pending',
+      comment: 'needs rewrite',
+    });
+    const scheduler = new PublishScheduler(db);
+    const port = 51860;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/review-items/${review.id}/rewrite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reviewerId: 'operator',
+        comment: 'Please make it warmer.',
+      }),
+    });
+    const rewriting = await response.json() as {
+      status: string;
+      comment: string;
+      rewriteError: string;
+      rewrittenBody: string;
+    };
+
+    expect(response.status).toBe(200);
+    expect(rewriting.status).toBe('rewriting');
+    expect(rewriting.comment).toBe('Please make it warmer.');
+    expect(rewriting.rewriteError).toBeTruthy();
+    expect(rewriting.rewrittenBody).toBe('');
+    expect(db.contentItems.findById(content.id)).toMatchObject({
+      body: 'Original content waiting for rewrite.',
+      status: 'reviewing',
+    });
+  });
+
   test('starts and reads traceable workflow runs through the local api', async () => {
     const db = await createDatabase(':memory:');
     const account = db.accounts.create({

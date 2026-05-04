@@ -4,32 +4,41 @@ import {
   Users, 
   Clock, 
   AlertTriangle, 
-  Zap, 
   CheckCircle2, 
   TrendingUp, 
   Activity,
   Calendar,
   Layers,
-  MoreHorizontal
+  MoreHorizontal,
+  FileText,
+  Eye,
+  Send,
+  Sparkles,
 } from 'lucide-react';
-import type { Account, DistributionTask } from '../../shared/types';
+import type { Account, ContentItem, DistributionTask, ReviewItem } from '../../shared/types';
 import { appApi } from '../api';
 
 export function HomePage() {
   const { t } = useTranslation();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [tasks, setTasks] = useState<DistributionTask[]>([]);
+  const [contents, setContents] = useState<ContentItem[]>([]);
+  const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
-        const [nextAccounts, nextTasks] = await Promise.all([
-          appApi.accounts.list(), 
-          appApi.distributionTasks.list()
+        const [nextAccounts, nextTasks, nextContents, nextReviewItems] = await Promise.all([
+          appApi.accounts.list(),
+          appApi.distributionTasks.list(),
+          appApi.contents.list(),
+          appApi.review.listItems().catch(() => []),
         ]);
         setAccounts(nextAccounts || []);
         setTasks(nextTasks || []);
+        setContents(nextContents || []);
+        setReviewItems(nextReviewItems || []);
       } catch (err) {
         console.error('Failed to load home data:', err);
       } finally {
@@ -50,9 +59,21 @@ export function HomePage() {
     );
   }
 
+  // 真实数据指标计算
   const pendingTasks = (tasks || []).filter((task) => task?.status === 'queued').length;
+  const publishedTasks = (tasks || []).filter((task) => task?.status === 'published').length;
+  const failedTasks = (tasks || []).filter((task) => task?.status === 'failed').length;
+  const totalFinishedTasks = publishedTasks + failedTasks;
+  const successRate = totalFinishedTasks > 0 ? Math.round((publishedTasks / totalFinishedTasks) * 1000) / 10 : 100;
+
   const manualAccounts = (accounts || []).filter((account) => account?.status !== 'active');
   const manualTasks = (tasks || []).filter((task) => task?.status === 'needs_manual_action' || task?.status === 'failed').slice(0, 5);
+
+  // 今日数据
+  const today = new Date().toISOString().split('T')[0];
+  const todayContents = contents.filter((c) => c.createdAt?.startsWith(today));
+  const pendingReviews = reviewItems.filter((r) => r.status === 'pending').length;
+  const approvedContents = contents.filter((c) => c.status === 'approved').length;
 
   return (
     <div className="tw-min-h-screen tw-pb-20 tw-animate-fade-in">
@@ -77,7 +98,7 @@ export function HomePage() {
 
       {/* Bento Grid Stats */}
       <div className="tw-grid tw-grid-cols-12 tw-gap-6 tw-mb-12">
-         {/* Main Vital Card - Light Style */}
+         {/* Main Vital Card - 真实发布成功率 */}
          <div className="tw-col-span-12 lg:tw-col-span-4 tw-p-8 tw-bg-white tw-border tw-border-slate-100 tw-rounded-[2.5rem] tw-text-slate-900 tw-relative tw-overflow-hidden tw-shadow-xl shadow-premium">
             <div className="tw-absolute tw-top-0 tw-right-0 tw-p-8 tw-opacity-5 tw-text-brand-500">
                <TrendingUp size={120} />
@@ -85,12 +106,18 @@ export function HomePage() {
             <div className="tw-relative tw-z-10">
                <div className="tw-flex tw-items-center tw-gap-2 tw-mb-10">
                   <Activity size={16} className="tw-text-brand-500" />
-                  <span className="tw-text-[10px] tw-font-black tw-uppercase tw-tracking-widest tw-text-slate-400">{t('home.activeVelocity')}</span>
+                  <span className="tw-text-[10px] tw-font-black tw-uppercase tw-tracking-widest tw-text-slate-400">发布成功率</span>
                </div>
-               <div className="tw-text-6xl tw-font-black tw-tracking-tighter tw-mb-4 tw-text-slate-900">98.2<span className="tw-text-2xl tw-text-slate-300">%</span></div>
+               <div className="tw-text-6xl tw-font-black tw-tracking-tighter tw-mb-4 tw-text-slate-900">
+                  {successRate}<span className="tw-text-2xl tw-text-slate-300">%</span>
+               </div>
                <div className="tw-flex tw-items-center tw-gap-3">
-                  <div className="tw-px-2 tw-py-1 tw-bg-green-50 tw-rounded tw-text-[10px] tw-font-bold tw-text-green-600">+4.2%</div>
-                  <span className="tw-text-slate-400 tw-text-[11px] tw-font-medium">{t('home.systemOptimized')}</span>
+                  <div className={`tw-px-2 tw-py-1 tw-rounded tw-text-[10px] tw-font-bold ${successRate >= 90 ? 'tw-bg-green-50 tw-text-green-600' : successRate >= 70 ? 'tw-bg-yellow-50 tw-text-yellow-600' : 'tw-bg-red-50 tw-text-red-600'}`}>
+                    {publishedTasks}/{totalFinishedTasks || '-'}
+                  </div>
+                  <span className="tw-text-slate-400 tw-text-[11px] tw-font-medium">
+                    {totalFinishedTasks === 0 ? '暂无已完成任务' : '已完成任务统计'}
+                  </span>
                </div>
             </div>
          </div>
@@ -112,6 +139,26 @@ export function HomePage() {
                </div>
             ))}
          </div>
+      </div>
+
+      {/* 内容运营指标 */}
+      <div className="tw-grid tw-grid-cols-12 tw-gap-6 tw-mb-12">
+        {[
+          { label: '今日生成', value: todayContents.length, icon: Sparkles, color: 'tw-text-violet-500', bg: 'tw-bg-violet-50' },
+          { label: '待审核', value: pendingReviews, icon: Eye, color: 'tw-text-amber-500', bg: 'tw-bg-amber-50' },
+          { label: '已批准', value: approvedContents, icon: FileText, color: 'tw-text-blue-500', bg: 'tw-bg-blue-50' },
+          { label: '已发布', value: publishedTasks, icon: Send, color: 'tw-text-emerald-500', bg: 'tw-bg-emerald-50' },
+        ].map((stat, idx) => (
+          <div key={idx} className="tw-col-span-6 lg:tw-col-span-3 tw-bg-white tw-border tw-border-slate-100 tw-rounded-2xl tw-p-6 tw-shadow-sm hover:tw-shadow-md tw-transition-all">
+            <div className="tw-flex tw-items-center tw-justify-between tw-mb-4">
+              <div className={`tw-w-9 tw-h-9 ${stat.bg} tw-rounded-lg tw-flex tw-items-center tw-justify-center`}>
+                <stat.icon size={16} className={stat.color} />
+              </div>
+              <span className="tw-text-2xl tw-font-black tw-text-slate-900">{stat.value}</span>
+            </div>
+            <span className="tw-text-[11px] tw-font-bold tw-text-slate-400">{stat.label}</span>
+          </div>
+        ))}
       </div>
 
       {/* Detail Analysis */}

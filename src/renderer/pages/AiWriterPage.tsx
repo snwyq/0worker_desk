@@ -52,7 +52,7 @@ export function AiWriterPage() {
     setHotError(null);
     try {
       const data = await appApi.ai.listHotTopics();
-      setHotTopics(data || []);
+      setHotTopics(data?.items || []);
     } catch (err) {
       setHotError(String(err));
     } finally {

@@ -263,6 +263,8 @@ export interface ReviewItem {
   status: ReviewStatus;
   reviewerId: string;
   comment: string;
+  rewriteError: string;
+  rewrittenBody: string;
   approvedAt: string;
   createdAt: string;
   updatedAt: string;

@@ -34,7 +34,7 @@ import {
   Maximize2,
   FolderOpen
 } from 'lucide-react';
-import type { Account, ContentItem, DistributionTask, PlatformCode, Post, PostStatus, PublishRun, ReviewItem, SchedulerStatus } from '../../shared/types';
+import type { Account, ContentItem, ContentVersion, DistributionTask, PlatformCode, Post, PostStatus, PublishRun, ReviewItem, SchedulerStatus } from '../../shared/types';
 import { appApi } from '../api';
 import { formatQueueErrorMessage } from '../queueErrors';
 import { readTaskEditorDraft } from '../queueEditorModel';
@@ -55,6 +55,7 @@ export function QueuePage() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [tasks, setTasks] = useState<DistributionTask[]>([]);
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
+  const [contentVersionsById, setContentVersionsById] = useState<Record<number, ContentVersion[]>>({});
   const [loading, setLoading] = useState(true);
   
   // UI State
@@ -88,11 +89,15 @@ export function QueuePage() {
         appApi.distributionTasks.list(),
         appApi.review.listItems().catch(() => []),
       ]);
+      const nextVersions = await Promise.all(
+        (nextReviewItems || []).map(async (item) => [item.contentId, await appApi.contents.versions(item.contentId)] as const),
+      );
       setAccounts(nextAccounts || []);
       setContents(nextContents || []);
       setPosts(nextPosts || []);
       setTasks(nextTasks || []);
       setReviewItems(nextReviewItems || []);
+      setContentVersionsById(Object.fromEntries(nextVersions));
     } catch (err) {
       console.error('Failed to load queue data:', err);
     } finally {
@@ -472,6 +477,9 @@ export function QueuePage() {
                 comment: item.comment ?? '',
               };
               const statusMeta = getReviewStatusMeta(item);
+              const versions = contentVersionsById[item.contentId] ?? [];
+              const latestAiRewrite = item.rewrittenBody.trim() ? item.rewrittenBody : '';
+              const previousBody = versions.find((version) => version.body !== (latestAiRewrite || draft.body))?.body ?? '';
               return (
                 <div key={item.id} className="tw-px-8 tw-py-5 tw-grid tw-grid-cols-1 xl:tw-grid-cols-[1fr_auto] tw-gap-5">
                   <div className="tw-min-w-0 tw-space-y-3">
@@ -495,6 +503,12 @@ export function QueuePage() {
                         <span>{statusMeta.hint}</span>
                       </div>
                     )}
+                    {item.rewriteError.trim() && (
+                      <div className="tw-flex tw-items-start tw-gap-2 tw-rounded-xl tw-bg-red-50 tw-px-3 tw-py-2 tw-text-[11px] tw-font-bold tw-text-red-700">
+                        <AlertCircle size={14} className="tw-mt-0.5 tw-shrink-0" />
+                        <span>AI 重写失败：{item.rewriteError}</span>
+                      </div>
+                    )}
                     <textarea
                       className="tw-w-full tw-min-h-28 tw-bg-slate-50 tw-border tw-border-slate-100 tw-rounded-2xl tw-p-4 tw-text-xs tw-text-slate-700 tw-leading-relaxed focus:tw-border-brand-500 tw-outline-none tw-resize-y"
                       value={draft.body}
@@ -512,6 +526,22 @@ export function QueuePage() {
                       }))}
                       placeholder="审核意见、驳回原因或重写要求"
                     />
+                    {(latestAiRewrite || previousBody) && (
+                      <div className="tw-grid tw-grid-cols-1 lg:tw-grid-cols-2 tw-gap-3">
+                        {latestAiRewrite && (
+                          <div className="tw-rounded-2xl tw-border tw-border-emerald-100 tw-bg-emerald-50/60 tw-p-4">
+                            <div className="tw-mb-2 tw-text-[10px] tw-font-black tw-uppercase tw-tracking-widest tw-text-emerald-700">最近 AI 重写稿</div>
+                            <p className="tw-whitespace-pre-wrap tw-text-[11px] tw-leading-relaxed tw-text-emerald-950">{latestAiRewrite}</p>
+                          </div>
+                        )}
+                        {previousBody && (
+                          <div className="tw-rounded-2xl tw-border tw-border-slate-100 tw-bg-slate-50 tw-p-4">
+                            <div className="tw-mb-2 tw-text-[10px] tw-font-black tw-uppercase tw-tracking-widest tw-text-slate-500">上一版正文</div>
+                            <p className="tw-whitespace-pre-wrap tw-text-[11px] tw-leading-relaxed tw-text-slate-700">{previousBody}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="tw-flex xl:tw-flex-col tw-gap-2 tw-items-stretch xl:tw-min-w-32">
                     <button

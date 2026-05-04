@@ -1,4 +1,4 @@
-import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AiWorkflowRun, AppSetting, ConnectionTestResult, ContentItem, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DistributionTask, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput } from '../shared/types';
+import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AiWorkflowRun, AppSetting, ConnectionTestResult, ContentItem, ContentVersion, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DistributionTask, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput } from '../shared/types';
 
 
 const httpBaseUrl = 'http://127.0.0.1:5183';
@@ -214,6 +214,12 @@ export const appApi = {
         method: 'DELETE',
       });
     },
+    versions: (contentId: number): Promise<ContentVersion[]> => {
+      if (window.weiboPublisher?.contents) {
+        return window.weiboPublisher.contents.versions(contentId) as Promise<ContentVersion[]>;
+      }
+      return httpJson<ContentVersion[]>(`/contents/${contentId}/versions`);
+    },
   },
   distributionTasks: {
     list: (): Promise<DistributionTask[]> => {
@@ -390,6 +396,14 @@ export const appApi = {
       return httpJson<ContentStyle[]>(`/ai/styles/${encodeURIComponent(id)}/copy-to-accounts`, {
         method: 'POST',
         body: JSON.stringify(input),
+      });
+    },
+    deleteStyle: (id: string): Promise<{ ok: boolean }> => {
+      if (window.weiboPublisher?.ai?.deleteStyle) {
+        return window.weiboPublisher.ai.deleteStyle(id);
+      }
+      return httpJson<{ ok: boolean }>(`/ai/styles/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
       });
     },
     listWorkflows: (pluginCode: string): Promise<AiWorkflow[]> => {

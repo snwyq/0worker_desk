@@ -77,6 +77,7 @@ declare global {
         createStyle: (input: CreateContentStyleInput) => Promise<ContentStyle>;
         updateStyle: (id: string, input: UpdateContentStyleInput) => Promise<ContentStyle>;
         copyStyleToAccounts: (id: string, input: CopyContentStyleInput) => Promise<ContentStyle[]>;
+        deleteStyle: (id: string) => Promise<{ ok: boolean }>;
         listWorkflows: (pluginCode: string) => Promise<AiWorkflow[]>;
         startWorkflowRun: (input: {
           accountId: number | null;

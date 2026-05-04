@@ -331,6 +331,19 @@ export function AgentEnginePage() {
     }
   }
 
+  async function deleteStyle(style: ContentStyle) {
+    if (!selectedAccount) return;
+    if (!confirm(`确定要删除风格「${style.name}」吗？此操作不可恢复。`)) return;
+    setError('');
+    try {
+      await appApi.ai.deleteStyle(style.id);
+      await loadStyles(selectedAccount.id, selectedPlugin);
+      setNotice(`已删除风格：${style.name}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   async function saveStyle(event: React.FormEvent) {
     event.preventDefault();
     if (!selectedAccount) return;
@@ -565,6 +578,9 @@ export function AgentEnginePage() {
                         </button>
                         <button type="button" onClick={() => void pauseStyle(style)} className="tw-inline-flex tw-items-center tw-gap-1 tw-px-3 tw-py-1.5 tw-bg-white tw-border tw-border-red-100 tw-rounded-lg tw-text-[10px] tw-font-black tw-text-red-500">
                           <Trash2 size={12} /> 暂停
+                        </button>
+                        <button type="button" onClick={() => void deleteStyle(style)} className="tw-inline-flex tw-items-center tw-gap-1 tw-px-3 tw-py-1.5 tw-bg-red-50 tw-border tw-border-red-200 tw-rounded-lg tw-text-[10px] tw-font-black tw-text-red-600 hover:tw-bg-red-100 tw-transition-all">
+                          <Trash2 size={12} /> 删除
                         </button>
                       </div>
                     )}

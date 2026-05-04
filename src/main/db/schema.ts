@@ -182,6 +182,8 @@ CREATE TABLE IF NOT EXISTS review_items (
   status TEXT NOT NULL DEFAULT 'pending',
   reviewerId TEXT NOT NULL DEFAULT '',
   comment TEXT NOT NULL DEFAULT '',
+  rewriteError TEXT NOT NULL DEFAULT '',
+  rewrittenBody TEXT NOT NULL DEFAULT '',
   approvedAt TEXT NOT NULL DEFAULT '',
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL,

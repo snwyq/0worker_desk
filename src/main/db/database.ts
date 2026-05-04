@@ -142,6 +142,8 @@ function mapReviewItem(row: Record<string, unknown>): ReviewItem {
     status: row.status as ReviewItem['status'],
     reviewerId: String(row.reviewerId ?? ''),
     comment: String(row.comment ?? ''),
+    rewriteError: String(row.rewriteError ?? ''),
+    rewrittenBody: String(row.rewrittenBody ?? ''),
     approvedAt: String(row.approvedAt ?? ''),
     createdAt: String(row.createdAt),
     updatedAt: String(row.updatedAt),
@@ -549,6 +551,15 @@ export async function createDatabase(filename: string) {
     } catch (e) {}
     try {
       sqlite.prepare('ALTER TABLE ai_workflow_runs ADD COLUMN workflowCode TEXT NOT NULL DEFAULT ""').run();
+    } catch (e) {}
+  });
+
+  applyMigration('005_review_rewrite_feedback', () => {
+    try {
+      sqlite.prepare("ALTER TABLE review_items ADD COLUMN rewriteError TEXT NOT NULL DEFAULT ''").run();
+    } catch (e) {}
+    try {
+      sqlite.prepare("ALTER TABLE review_items ADD COLUMN rewrittenBody TEXT NOT NULL DEFAULT ''").run();
     } catch (e) {}
   });
 
@@ -1147,6 +1158,22 @@ export async function createDatabase(filename: string) {
         })();
         return created;
       },
+      delete(id: string): boolean {
+        const existing = this.findById(id);
+        if (!existing) {
+          return false;
+        }
+        // 检查是否有关联的未完成内容
+        const linkedContents = select(
+          `SELECT id FROM content_items WHERE styleId = ? AND status NOT IN ('published', 'rejected')`,
+          [id],
+        );
+        if (linkedContents.length > 0) {
+          throw new Error(`风格「${existing.name}」仍有 ${linkedContents.length} 条活跃内容关联，请先处理后再删除。`);
+        }
+        sqlite.prepare('DELETE FROM content_styles WHERE id = ?').run(id);
+        return !this.findById(id);
+      },
     },
     contentItems: {
       create(input: CreateContentItemInput): ContentItem {
@@ -1229,8 +1256,8 @@ export async function createDatabase(filename: string) {
         const timestamp = now();
         firstRow(sqlite.prepare('SELECT id FROM content_items WHERE id = ?').get(input.contentId));
         const result = sqlite.prepare(`
-          INSERT INTO review_items (contentId, reviewMode, status, comment, createdAt, updatedAt)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO review_items (contentId, reviewMode, status, comment, rewriteError, rewrittenBody, createdAt, updatedAt)
+          VALUES (?, ?, ?, ?, '', '', ?, ?)
         `).run(
           input.contentId,
           input.reviewMode,
@@ -1244,7 +1271,7 @@ export async function createDatabase(filename: string) {
       listPending(): ReviewItem[] {
         return select(`
           SELECT * FROM review_items
-          WHERE status = 'pending'
+          WHERE status IN ('pending', 'rewriting')
           ORDER BY createdAt ASC, id ASC
         `).map(mapReviewItem);
       },
@@ -1290,7 +1317,7 @@ export async function createDatabase(filename: string) {
         const rewrite = sqlite.transaction(() => {
           sqlite.prepare(`
             UPDATE review_items
-            SET status = 'rewriting', reviewerId = ?, comment = ?, updatedAt = ?
+            SET status = 'rewriting', reviewerId = ?, comment = ?, rewriteError = '', updatedAt = ?
             WHERE id = ?
           `).run(reviewerId, comment, timestamp, id);
           const review = mapReviewItem(firstRow(sqlite.prepare('SELECT * FROM review_items WHERE id = ?').get(id)));
@@ -1319,11 +1346,19 @@ export async function createDatabase(filename: string) {
           `).run(review.contentId, content.title, rewrittenBody, timestamp);
           sqlite.prepare(`
             UPDATE review_items
-            SET status = 'pending', reviewerId = ?, comment = ?, updatedAt = ?
+            SET status = 'pending', reviewerId = ?, comment = ?, rewriteError = '', rewrittenBody = ?, updatedAt = ?
             WHERE id = ?
-          `).run(reviewerId, `AI rewrite generated from: ${comment}`, timestamp, id);
+          `).run(reviewerId, `AI rewrite generated from: ${comment}`, rewrittenBody, timestamp, id);
         });
         apply();
+        return mapReviewItem(firstRow(sqlite.prepare('SELECT * FROM review_items WHERE id = ?').get(id)));
+      },
+      setRewriteError(id: number, message: string): ReviewItem {
+        sqlite.prepare(`
+          UPDATE review_items
+          SET rewriteError = ?, updatedAt = ?
+          WHERE id = ?
+        `).run(message, now(), id);
         return mapReviewItem(firstRow(sqlite.prepare('SELECT * FROM review_items WHERE id = ?').get(id)));
       },
     },
