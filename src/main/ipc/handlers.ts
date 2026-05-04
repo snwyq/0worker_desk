@@ -381,7 +381,7 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   ipcMain.handle('ai:previewWorkflow_v3', async (event, pluginCode: string, workflowCode: string, inputParams: any) => {
     return handlePreviewWorkflow(event, repositories, pluginCode, workflowCode, inputParams);
   });
-  ipcMain.handle('ai:listHotTopics', () => aiService.fetchHotTopics());
+  ipcMain.handle('ai:listHotTopics', (_event, force: boolean) => aiService.fetchHotTopics(force));
   ipcMain.handle('ai:startAgentSchedule', async (_event, accountId: number) => {
     // In production, this would register a node-cron job or an interval.
     return { ok: true, message: `Scheduled agent for account ${accountId}` };

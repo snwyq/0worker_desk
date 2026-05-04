@@ -335,11 +335,11 @@ export const appApi = {
       }
       return httpJson<AiWorkflow[]>(`/ai/plugins/${pluginCode}/workflows`);
     },
-    listHotTopics: async (): Promise<{ items: any[], lastFetchTime: string | null }> => {
+    listHotTopics: async (force = false): Promise<{ items: any[], lastFetchTime: string | null }> => {
       if (window.weiboPublisher?.ai) {
-        return await window.weiboPublisher.ai.listHotTopics();
+        return await window.weiboPublisher.ai.listHotTopics(force);
       }
-      return await httpJson<{ items: any[], lastFetchTime: string | null }>('/ai/hot-topics');
+      return await httpJson<{ items: any[], lastFetchTime: string | null }>(`/ai/hot-topics${force ? '?force=true' : ''}`);
     },
     previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any): Promise<{ runId: string }> => {
       if (window.weiboPublisher?.ai) {

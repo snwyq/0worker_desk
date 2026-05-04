@@ -143,10 +143,24 @@ export class AiService {
     return data.data[0].url;
   }
 
-  async fetchHotTopics(): Promise<{ items: any[], lastFetchTime: string | null }> {
-    console.log('[AI-DEBUG] listHotTopics IPC triggered');
+  async fetchHotTopics(force = false): Promise<{ items: any[], lastFetchTime: string | null }> {
+    console.log(`[AI-DEBUG] listHotTopics IPC triggered (force=${force})`);
     
-    const lastFetchTime = this.db?.hotTopicsHistory.getLastFetchTime();
+    const dbLastFetchTime = this.db?.hotTopicsHistory.getLastFetchTime();
+    const now = new Date().getTime();
+    const lastTime = dbLastFetchTime ? new Date(dbLastFetchTime).getTime() : 0;
+    const isExpired = (now - lastTime) > 6 * 60 * 60 * 1000;
+
+    // 如果非强制刷新，且数据未过期，则直接返回本地缓存
+    if (!force && !isExpired && dbLastFetchTime) {
+      console.log('[AI-DEBUG] Data is still fresh, returning from cache.');
+      return {
+        items: this.db.hotTopicsHistory.getLatest() || [],
+        lastFetchTime: dbLastFetchTime
+      };
+    }
+
+    console.log('[AI-DEBUG] Fetching new data from Tophub...');
     
     // 真实抓取
     const TOPHUB_API_KEY = this.db?.settings.get('ai.tophubKey') || '06d2a2c31c219c88ea3ee3fe1b7bb33c';
@@ -163,8 +177,6 @@ export class AiService {
       const dbKey = this.db?.settings.get('ai.tophubKey');
       const finalKey = (dbKey && dbKey.trim()) ? dbKey : TOPHUB_API_KEY;
       
-      console.log(`[AI-DEBUG] Starting fetch with key: ${finalKey.substring(0, 4)}...`);
-
       const allResults = await Promise.all(nodes.map(async (node) => {
         try {
           const response = await fetch(`${TOPHUB_BASE_URL}/${node.hashid}`, {
@@ -174,11 +186,8 @@ export class AiService {
           if (!response.ok) return [];
           const res = await response.json();
           if (res.status === 200 && res.data?.items) {
-            if (res.data.items.length > 0) {
-              console.log(`[AI-DEBUG] Platform: ${node.source_name}, Keys found: ${Object.keys(res.data.items[0]).join(', ')}`);
-            }
             return res.data.items.slice(0, 40).map((item: any) => ({
-              ...item, // 镜像透传所有原始字段
+              ...item,
               platform: node.source_name,
             }));
           }
@@ -195,8 +204,6 @@ export class AiService {
       }
 
       const finalTime = this.db.hotTopicsHistory.getLastFetchTime() || new Date().toISOString();
-      console.log(`[AI-DEBUG] Fetch success. Total items: ${finalItems.length}`);
-
       return {
         items: finalItems,
         lastFetchTime: finalTime
@@ -206,7 +213,7 @@ export class AiService {
       console.error('[AI-DEBUG] Fatal error in fetchHotTopics:', error);
       return {
         items: this.db.hotTopicsHistory.getLatest() || [],
-        lastFetchTime: lastFetchTime || new Date().toISOString()
+        lastFetchTime: dbLastFetchTime || new Date().toISOString()
       };
     }
   }

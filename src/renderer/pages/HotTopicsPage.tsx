@@ -16,22 +16,22 @@ export function HotTopicsPage() {
 
   const mirrorColumns = [
     { key: 'platform', label: '平台', group: 'core' },
+    { key: 'title', label: '标题内容', group: 'core' },
     { key: 'rank', label: 'RANK', group: 'api' },
-    { key: 'title', label: '标题内容', group: 'api' },
-    { key: 'hotValue', label: '热度', group: 'api' },
+    { key: 'hotValue', label: '热度值', group: 'api' },
     { key: 'hot_value', label: '原始热度', group: 'api' },
-    { key: 'extra', label: '额外数据', group: 'mirror' },
-    { key: 'desc', label: '描述', group: 'mirror' },
-    { key: 'author', label: '作者', group: 'mirror' },
-    { key: 'url', label: '链接', group: 'mirror' },
-    { key: 'mobilUrl', label: '移动端', group: 'mirror' },
-    { key: 'thumbnail', label: '封面图', group: 'mirror' }
+    { key: 'author', label: '作者', group: 'api' },
+    { key: 'desc', label: '内容描述', group: 'mirror' },
+    { key: 'url', label: 'PC 链接', group: 'link' },
+    { key: 'mobilUrl', label: '移动端', group: 'link' },
+    { key: 'thumbnail', label: '封面图', group: 'mirror' },
+    { key: 'extra', label: '扩展镜像', group: 'mirror' },
   ];
 
-  const loadHotTopics = async () => {
+  const loadHotTopics = async (force = false) => {
     setLoading(true);
     try {
-      const response = await appApi.ai.listHotTopics();
+      const response = await appApi.ai.listHotTopics(force);
       setHotTopics(response.items || []);
       setLastFetchTime(response.lastFetchTime || new Date().toISOString());
     } catch (err) {
@@ -42,7 +42,7 @@ export function HotTopicsPage() {
   };
 
   useEffect(() => {
-    loadHotTopics();
+    loadHotTopics(false); // 初始进入页面，不强制刷新 API，优先读本地镜像
   }, []);
 
   const platforms = Array.from(new Set(hotTopics.map(t => t.platform)));
@@ -58,6 +58,7 @@ export function HotTopicsPage() {
     if (p?.includes('微博')) return 'tw-bg-red-50 tw-text-red-500 tw-border-red-100';
     if (p?.includes('知乎')) return 'tw-bg-blue-50 tw-text-blue-500 tw-border-blue-100';
     if (p?.includes('百度')) return 'tw-bg-blue-50 tw-text-blue-600 tw-border-blue-100';
+    if (p?.includes('头条')) return 'tw-bg-orange-50 tw-text-orange-600 tw-border-orange-100';
     return 'tw-bg-slate-100 tw-text-slate-600 tw-border-slate-200';
   };
 
@@ -71,11 +72,11 @@ export function HotTopicsPage() {
                <Globe size={24} />
              </div>
              <div>
-               <h1 className="tw-text-2xl tw-font-black tw-text-slate-900 tw-tracking-tight">数据库镜像视图</h1>
+               <h1 className="tw-text-2xl tw-font-black tw-text-slate-900 tw-tracking-tight">实时热点镜像视图</h1>
                <div className="tw-flex tw-items-center tw-gap-2 tw-mt-1">
-                 <span className="tw-text-[11px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest">Mirroring: hot_topics_history</span>
+                 <span className="tw-text-[11px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest">Data Stream: hot_topics_history</span>
                  {lastFetchTime && (
-                   <span className="tw-text-[10px] tw-text-slate-300">| 最后同步: {new Date(lastFetchTime).toLocaleTimeString()}</span>
+                   <span className="tw-text-[10px] tw-text-slate-300">| 最后采集: {new Date(lastFetchTime).toLocaleString()}</span>
                  )}
                </div>
              </div>
@@ -83,6 +84,19 @@ export function HotTopicsPage() {
         </div>
         
         <div className="tw-flex tw-items-center tw-gap-4">
+           {lastFetchTime && (
+             <div className="tw-text-right">
+               <div className={`tw-text-[10px] tw-font-bold ${
+                 (!lastFetchTime || (new Date().getTime() - new Date(lastFetchTime).getTime()) > 6 * 60 * 60 * 1000)
+                 ? 'tw-text-green-500' : 'tw-text-orange-400'
+               }`}>
+                 {(!lastFetchTime || (new Date().getTime() - new Date(lastFetchTime).getTime()) > 6 * 60 * 60 * 1000) 
+                   ? '接口就绪' : `同步冷却中 (${Math.ceil((6 * 60 * 60 * 1000 - (new Date().getTime() - new Date(lastFetchTime).getTime())) / (60 * 60 * 1000))}h 后解除)`}
+               </div>
+               <div className="tw-text-[9px] tw-text-slate-300 tw-mt-0.5">策略保护: 6小时/次</div>
+             </div>
+           )}
+
            <div className="tw-relative tw-w-64">
              <Search className="tw-absolute tw-left-4 tw-top-1/2 tw--translate-y-1/2 tw-text-slate-400" size={14} />
              <input
@@ -94,12 +108,15 @@ export function HotTopicsPage() {
              />
            </div>
            <button 
-             onClick={loadHotTopics}
-             disabled={loading}
-             className="tw-px-6 tw-py-2.5 tw-bg-slate-900 tw-text-white tw-text-[11px] tw-font-bold tw-rounded-xl hover:tw-bg-black tw-active:tw-scale-95 tw-transition-all tw-flex tw-items-center tw-gap-2 tw-shadow-md"
+             onClick={() => loadHotTopics(true)}
+             disabled={loading || (lastFetchTime !== null && (new Date().getTime() - new Date(lastFetchTime).getTime()) < 6 * 60 * 60 * 1000)}
+             className={`tw-px-6 tw-py-2.5 tw-text-white tw-text-[11px] tw-font-bold tw-rounded-xl tw-transition-all tw-flex tw-items-center tw-gap-2 tw-shadow-md ${
+               (loading || (lastFetchTime !== null && (new Date().getTime() - new Date(lastFetchTime).getTime()) < 6 * 60 * 60 * 1000))
+               ? 'tw-bg-slate-300 tw-cursor-not-allowed' : 'tw-bg-slate-900 hover:tw-bg-black tw-active:tw-scale-95'
+             }`}
            >
               <RefreshCw size={12} className={loading ? 'tw-animate-spin' : ''} />
-              {loading ? '同步中' : '全量同步'}
+              {loading ? '同步中' : '执行全量同步'}
            </button>
         </div>
       </div>
@@ -126,7 +143,7 @@ export function HotTopicsPage() {
       {/* 高密度数据镜像表格 */}
       <div className="tw-bg-white tw-border tw-border-slate-200/60 tw-rounded-[1.5rem] tw-overflow-hidden tw-shadow-2xl tw-shadow-slate-200/50 tw-flex tw-flex-col">
         <div className="tw-overflow-auto tw-max-h-[calc(100vh-320px)] tw-scrollbar-thin">
-          <table className="tw-w-full tw-text-left tw-border-collapse tw-min-w-[2000px] tw-table-fixed">
+          <table className="tw-w-full tw-text-left tw-border-collapse tw-min-w-[2200px] tw-table-fixed">
             <thead className="tw-sticky tw-top-0 tw-z-20">
               <tr className="tw-bg-slate-50 tw-border-b tw-border-slate-100">
                 <th className="tw-px-4 tw-py-3 tw-text-[10px] tw-font-black tw-text-slate-400 tw-uppercase tw-w-[60px] tw-sticky tw-left-0 tw-bg-slate-50 tw-z-30 tw-text-center">IDX</th>
@@ -134,6 +151,7 @@ export function HotTopicsPage() {
                   <th key={col.key} className={`tw-px-4 tw-py-3 tw-text-[10px] tw-font-black tw-uppercase tw-tracking-wider ${
                     col.group === 'core' ? 'tw-text-slate-900 tw-bg-slate-100/50' : 
                     col.group === 'api' ? 'tw-text-blue-500 tw-bg-blue-50/30' : 
+                    col.group === 'link' ? 'tw-text-green-600 tw-bg-green-50/20' :
                     'tw-text-slate-400'
                   }`}>
                     <div className="tw-flex tw-items-center tw-gap-1.5">
@@ -147,8 +165,8 @@ export function HotTopicsPage() {
             <tbody className="tw-divide-y tw-divide-slate-50">
               {filteredTopics.length > 0 ? (
                 filteredTopics.map((topic, idx) => (
-                  <tr key={idx} className="tw-group tw-hover:tw-bg-blue-50/30 tw-transition-all">
-                    <td className="tw-px-4 tw-py-2.5 tw-text-[10px] tw-text-slate-400 font-mono tw-sticky tw-left-0 tw-bg-white tw-z-10 tw-border-r tw-border-slate-100 group-hover:tw-bg-blue-50/50 tw-text-center">
+                  <tr key={idx} className="tw-group tw-even:tw-bg-slate-50/40 tw-hover:tw-bg-blue-50/30 tw-transition-all">
+                    <td className="tw-px-4 tw-py-2.5 tw-text-[10px] tw-text-slate-400 font-mono tw-sticky tw-left-0 tw-bg-inherit tw-z-10 tw-border-r tw-border-slate-100 group-hover:tw-bg-blue-50/50 tw-text-center">
                       {String(idx + 1).padStart(3, '0')}
                     </td>
                     {mirrorColumns.map(col => {
@@ -165,6 +183,15 @@ export function HotTopicsPage() {
                             <div className="tw-text-[11px] tw-text-slate-900 tw-font-bold tw-truncate tw-max-w-full" title={val}>
                               {val}
                             </div>
+                          ) : col.group === 'link' && !isEmpty ? (
+                            <a 
+                              href={String(val)} 
+                              target="_blank" 
+                              rel="noreferrer"
+                              className="tw-inline-flex tw-items-center tw-gap-1 tw-text-blue-500 hover:tw-text-blue-700 tw-text-[10px] tw-font-bold tw-transition-colors"
+                            >
+                              打开资源 <Globe size={10} />
+                            </a>
                           ) : (
                             <div className={`tw-text-[11px] tw-font-medium tw-truncate ${isEmpty ? 'tw-text-slate-200' : 'tw-text-slate-500'}`} title={val}>
                               {isEmpty ? '—' : String(val)}
