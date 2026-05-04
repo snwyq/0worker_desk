@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, useRef } from 'react';
+﻿import { Fragment, useEffect, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { 
   Plus, 
@@ -6,6 +6,7 @@ import {
   Filter, 
   Calendar, 
   Clock, 
+  ClipboardCheck,
   AlertCircle, 
   CheckCircle2, 
   ChevronDown, 
@@ -33,8 +34,9 @@ import {
   Maximize2,
   FolderOpen
 } from 'lucide-react';
-import type { Account, ContentItem, DistributionTask, PlatformCode, Post, PostStatus, PublishRun, SchedulerStatus } from '../../shared/types';
+import type { Account, ContentItem, DistributionTask, PlatformCode, Post, PostStatus, PublishRun, ReviewItem, SchedulerStatus } from '../../shared/types';
 import { appApi } from '../api';
+import { formatQueueErrorMessage } from '../queueErrors';
 import { readTaskEditorDraft } from '../queueEditorModel';
 import { htmlToPlainPreview } from '../textFormatting';
 
@@ -52,6 +54,7 @@ export function QueuePage() {
   const [contents, setContents] = useState<ContentItem[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
   const [tasks, setTasks] = useState<DistributionTask[]>([]);
+  const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
   const [loading, setLoading] = useState(true);
   
   // UI State
@@ -60,7 +63,8 @@ export function QueuePage() {
   const [activeFilter, setActiveFilter] = useState<'all' | PostStatus>('all');
   const [expandedTaskId, setExpandedTaskId] = useState<number | null>(null);
   const [taskRuns, setTaskRuns] = useState<Record<number, PublishRun[]>>({});
-  const [busyPost, setBusyPost] = useState<Post | null>(null);
+  const [busyTaskId, setBusyTaskId] = useState<number | null>(null);
+  const [busyReviewId, setBusyReviewId] = useState<number | null>(null);
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null);
   
   // Form State
@@ -70,22 +74,25 @@ export function QueuePage() {
   const [scheduledAt, setScheduledAt] = useState('');
   const [error, setError] = useState('');
   const [editorHtml, setEditorHtml] = useState('');
+  const [reviewDrafts, setReviewDrafts] = useState<Record<number, { title: string; body: string; comment: string }>>({});
   
-  // 用一个 ref 来存储真实的 HTML 内容，避免 React 重新渲染导致的输入 Bug
+  // Keep the editor content stable across React re-renders.
   const contentRef = useRef('');
 
   async function load() {
     try {
-      const [nextAccounts, nextContents, nextPosts, nextTasks] = await Promise.all([
+      const [nextAccounts, nextContents, nextPosts, nextTasks, nextReviewItems] = await Promise.all([
         appApi.accounts.list(),
         appApi.contents.list(),
         appApi.posts.list(),
         appApi.distributionTasks.list(),
+        appApi.review.listItems().catch(() => []),
       ]);
       setAccounts(nextAccounts || []);
       setContents(nextContents || []);
       setPosts(nextPosts || []);
       setTasks(nextTasks || []);
+      setReviewItems(nextReviewItems || []);
     } catch (err) {
       console.error('Failed to load queue data:', err);
     } finally {
@@ -106,7 +113,7 @@ export function QueuePage() {
     try {
       setSchedulerStatus(await appApi.scheduler.start());
     } catch (err) {
-      alert('启动失败: ' + String(err));
+      alert('启动调度器失败：' + String(err));
     }
   }
 
@@ -114,7 +121,7 @@ export function QueuePage() {
     try {
       setSchedulerStatus(await appApi.scheduler.stop());
     } catch (err) {
-      alert('停止失败: ' + String(err));
+      alert('停止调度器失败：' + String(err));
     }
   }
 
@@ -131,6 +138,7 @@ export function QueuePage() {
 
   const accountsById = new Map(accounts.map((a) => [a.id, a]));
   const postsById = new Map(posts.map((p) => [p.id, p]));
+  const contentsById = new Map(contents.map((content) => [content.id, content]));
 
   const filteredTasks = tasks.filter((task) => {
     const account = accountsById.get(task.accountId);
@@ -207,7 +215,7 @@ export function QueuePage() {
       resetForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatQueueErrorMessage(err));
     }
   }
 
@@ -235,22 +243,102 @@ export function QueuePage() {
     }
   }
 
-  async function publishNow(post: Post) {
-    if (busyPost) return;
-    setBusyPost(post);
+  async function publishTaskNow(task: DistributionTask) {
+    if (busyTaskId) return;
+    setBusyTaskId(task.id);
     try {
-      const account = accountsById.get(post.accountId);
-      if (account?.browserMode === 'adspower') {
-        await appApi.posts.publishNow(post.id);
-      } else {
-        await appApi.posts.attemptPublish(post.id);
-      }
+      await appApi.distributionTasks.publishNow(task.id);
       await load();
     } catch (err) {
       console.error('Manual publish failed:', err);
-      alert('执行失败: ' + (err instanceof Error ? err.message : String(err)));
+      alert('执行失败: ' + formatQueueErrorMessage(err));
     } finally {
-      setBusyPost(null);
+      setBusyTaskId(null);
+    }
+  }
+
+  async function returnTaskToReview(task: DistributionTask) {
+    if (busyTaskId) return;
+    const comment = window.prompt('请输入退回审核原因', task.lastError || '需要重新审核') || '';
+    if (!comment.trim()) return;
+    setBusyTaskId(task.id);
+    try {
+      await appApi.distributionTasks.returnToReview(task.id, comment.trim());
+      await load();
+    } catch (err) {
+      alert('退回审核失败: ' + formatQueueErrorMessage(err));
+    } finally {
+      setBusyTaskId(null);
+    }
+  }
+
+  async function approveReviewItem(item: ReviewItem) {
+    if (busyReviewId) return;
+    setBusyReviewId(item.id);
+    try {
+      const draft = reviewDrafts[item.id];
+      const content = contents.find((contentItem) => contentItem.id === item.contentId);
+      if (content && draft) {
+        await appApi.contents.update(content.id, {
+          title: draft.title,
+          body: draft.body,
+          status: 'reviewing',
+        });
+      }
+      await appApi.review.approve(item.id, 'operator', draft?.comment || 'Approved from queue review pool');
+      await load();
+    } catch (err) {
+      alert('审核通过失败: ' + formatQueueErrorMessage(err));
+    } finally {
+      setBusyReviewId(null);
+    }
+  }
+
+  async function rejectReviewItem(item: ReviewItem) {
+    if (busyReviewId) return;
+    const draft = reviewDrafts[item.id];
+    const comment = draft?.comment || window.prompt('请输入驳回原因', '内容暂不适合发布') || '';
+    if (!comment.trim()) return;
+    setBusyReviewId(item.id);
+    try {
+      const content = contents.find((contentItem) => contentItem.id === item.contentId);
+      if (content && draft) {
+        await appApi.contents.update(content.id, {
+          title: draft.title,
+          body: draft.body,
+          status: 'reviewing',
+        });
+      }
+      await appApi.review.reject(item.id, 'operator', comment);
+      await load();
+    } catch (err) {
+      alert('驳回失败: ' + formatQueueErrorMessage(err));
+    } finally {
+      setBusyReviewId(null);
+    }
+  }
+
+  async function requestRewriteReviewItem(item: ReviewItem) {
+    if (busyReviewId) return;
+    const draft = reviewDrafts[item.id];
+    const comment = draft?.comment || window.prompt('请输入重写要求', '请保持事实不变，语气更自然，更适合微博发布') || '';
+    if (!comment.trim()) return;
+    setBusyReviewId(item.id);
+    try {
+      const content = contents.find((contentItem) => contentItem.id === item.contentId);
+      if (content && draft) {
+        await appApi.contents.update(content.id, {
+          title: draft.title,
+          body: draft.body,
+          status: 'reviewing',
+        });
+      }
+      await appApi.review.rewrite(item.id, 'operator', comment);
+      await load();
+    } catch (err) {
+      alert('AI 重写失败: ' + formatQueueErrorMessage(err));
+    } finally {
+      setBusyReviewId(null);
     }
   }
 
@@ -265,8 +353,33 @@ export function QueuePage() {
       case 'needs_manual_action':
         return <span className="tw-px-3 tw-py-1 tw-bg-amber-50 tw-text-amber-600 tw-rounded-full tw-text-[10px] tw-font-black tw-uppercase">需人工</span>;
       default:
-        return <span className="tw-px-3 tw-py-1 tw-bg-blue-50 tw-text-blue-600 tw-rounded-full tw-text-[10px] tw-font-black tw-uppercase">排队中</span>;
+        return <span className="tw-px-3 tw-py-1 tw-bg-blue-50 tw-text-blue-600 tw-rounded-full tw-text-[10px] tw-font-black tw-uppercase">队列中</span>;
     }
+  }
+
+  function getReviewStatusMeta(item: ReviewItem) {
+    if (item.status === 'rewriting') {
+      return {
+        label: 'AI 重写中',
+        className: 'tw-bg-blue-50 tw-text-blue-600',
+        hint: '模型暂未返回新版本时会停留在这里，可调整重写要求后再次点击重试。',
+        actionLabel: '重试重写',
+      };
+    }
+    if (item.status === 'rejected') {
+      return {
+        label: '已驳回',
+        className: 'tw-bg-red-50 tw-text-red-600',
+        hint: '内容已被驳回，不会进入调度池。',
+        actionLabel: 'AI 重写',
+      };
+    }
+    return {
+      label: '待审核',
+      className: 'tw-bg-amber-50 tw-text-amber-600',
+      hint: '编辑正文后通过会进入调度池；驳回会保留原因并结束本次审核。',
+      actionLabel: 'AI 重写',
+    };
   }
 
   if (loading) {
@@ -332,6 +445,110 @@ export function QueuePage() {
           </button>
         </div>
       </div>
+
+      {reviewItems.length > 0 && (
+        <div className="tw-bg-white tw-rounded-[32px] tw-border tw-border-slate-100 tw-shadow-sm tw-overflow-hidden">
+          <div className="tw-px-8 tw-py-5 tw-border-b tw-border-slate-50 tw-flex tw-items-center tw-justify-between">
+            <div className="tw-flex tw-items-center tw-gap-3">
+              <div className="tw-w-10 tw-h-10 tw-bg-amber-50 tw-text-amber-600 tw-rounded-xl tw-flex tw-items-center tw-justify-center">
+                <ClipboardCheck size={18} />
+              </div>
+              <div>
+                <h2 className="tw-text-sm tw-font-black tw-text-slate-900">AI 内容审核池</h2>
+                <p className="tw-text-xs tw-text-slate-400 tw-mt-0.5">编辑正文后通过会进入调度池；驳回会保留原因并结束本次审核。</p>
+              </div>
+            </div>
+            <span className="tw-px-3 tw-py-1 tw-bg-amber-50 tw-text-amber-600 tw-rounded-full tw-text-[10px] tw-font-black">
+              {reviewItems.length} 条待处理
+            </span>
+          </div>
+          <div className="tw-divide-y tw-divide-slate-50">
+            {reviewItems.slice(0, 5).map((item) => {
+              const content = contentsById.get(item.contentId);
+              const account = content?.accountId ? accountsById.get(content.accountId) : null;
+              const draft = reviewDrafts[item.id] ?? {
+                title: content?.title ?? '',
+                body: content?.body ?? '',
+                comment: item.comment ?? '',
+              };
+              const statusMeta = getReviewStatusMeta(item);
+              return (
+                <div key={item.id} className="tw-px-8 tw-py-5 tw-grid tw-grid-cols-1 xl:tw-grid-cols-[1fr_auto] tw-gap-5">
+                  <div className="tw-min-w-0 tw-space-y-3">
+                    <div className="tw-flex tw-items-center tw-gap-2">
+                      <input
+                        className="tw-flex-1 tw-min-w-0 tw-bg-transparent tw-border-b tw-border-slate-100 tw-py-1 tw-text-sm tw-font-black tw-text-slate-900 focus:tw-border-brand-500 tw-outline-none"
+                        value={draft.title}
+                        onChange={(event) => setReviewDrafts((current) => ({
+                          ...current,
+                          [item.id]: { ...draft, title: event.target.value },
+                        }))}
+                      />
+                      <span className={`tw-px-2.5 tw-py-1 tw-rounded-full tw-text-[10px] tw-font-black tw-shrink-0 ${statusMeta.className}`}>
+                        {statusMeta.label}
+                      </span>
+                      <span className="tw-text-[10px] tw-font-bold tw-text-slate-400 tw-shrink-0">{account?.name ?? '未绑定账号'}</span>
+                    </div>
+                    {item.status === 'rewriting' && (
+                      <div className="tw-flex tw-items-start tw-gap-2 tw-rounded-xl tw-bg-blue-50 tw-px-3 tw-py-2 tw-text-[11px] tw-font-bold tw-text-blue-700">
+                        <AlertCircle size={14} className="tw-mt-0.5 tw-shrink-0" />
+                        <span>{statusMeta.hint}</span>
+                      </div>
+                    )}
+                    <textarea
+                      className="tw-w-full tw-min-h-28 tw-bg-slate-50 tw-border tw-border-slate-100 tw-rounded-2xl tw-p-4 tw-text-xs tw-text-slate-700 tw-leading-relaxed focus:tw-border-brand-500 tw-outline-none tw-resize-y"
+                      value={draft.body}
+                      onChange={(event) => setReviewDrafts((current) => ({
+                        ...current,
+                        [item.id]: { ...draft, body: event.target.value },
+                      }))}
+                    />
+                    <input
+                      className="tw-w-full tw-bg-transparent tw-border-b tw-border-slate-100 tw-py-2 tw-text-xs tw-text-slate-500 focus:tw-border-brand-500 tw-outline-none"
+                      value={draft.comment}
+                      onChange={(event) => setReviewDrafts((current) => ({
+                        ...current,
+                        [item.id]: { ...draft, comment: event.target.value },
+                      }))}
+                      placeholder="审核意见、驳回原因或重写要求"
+                    />
+                  </div>
+                  <div className="tw-flex xl:tw-flex-col tw-gap-2 tw-items-stretch xl:tw-min-w-32">
+                    <button
+                      onClick={() => void approveReviewItem(item)}
+                      disabled={busyReviewId === item.id}
+                      className="tw-flex tw-items-center tw-justify-center tw-gap-2 tw-px-5 tw-py-2.5 tw-bg-slate-900 tw-text-white tw-rounded-xl tw-text-xs tw-font-bold hover:tw-bg-brand-600 tw-transition-all disabled:tw-opacity-50"
+                      type="button"
+                    >
+                      <CheckCircle2 size={15} />
+                      通过
+                    </button>
+                    <button
+                      onClick={() => void rejectReviewItem(item)}
+                      disabled={busyReviewId === item.id}
+                      className="tw-flex tw-items-center tw-justify-center tw-gap-2 tw-px-5 tw-py-2.5 tw-bg-red-50 tw-text-red-600 tw-rounded-xl tw-text-xs tw-font-bold hover:tw-bg-red-100 tw-transition-all disabled:tw-opacity-50"
+                      type="button"
+                    >
+                      <XCircle size={15} />
+                      驳回
+                    </button>
+                    <button
+                      onClick={() => void requestRewriteReviewItem(item)}
+                      disabled={busyReviewId === item.id}
+                      className="tw-flex tw-items-center tw-justify-center tw-gap-2 tw-px-5 tw-py-2.5 tw-bg-amber-50 tw-text-amber-600 tw-rounded-xl tw-text-xs tw-font-bold hover:tw-bg-amber-100 tw-transition-all disabled:tw-opacity-50"
+                      type="button"
+                    >
+                      <RotateCcw size={15} />
+                      {statusMeta.actionLabel}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
 
       {/* Filters Bar */}
       <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-4">
@@ -400,13 +617,13 @@ export function QueuePage() {
                   <div className="tw-col-span-8 tw-space-y-8">
                     <div className="tw-space-y-3">
                       <div className="tw-flex tw-items-center tw-justify-between">
-                        <label className="tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest tw-ml-1">发布内容 (仅限纯文本)</label>
+                        <label className="tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest tw-ml-1">发布内容（纯文本）</label>
                         <span className="tw-text-[10px] tw-font-bold tw-text-slate-300">PLAIN TEXT MODE</span>
                       </div>
                       <div className="tw-relative tw-bg-white tw-rounded-[32px] tw-border tw-border-slate-100 tw-overflow-hidden focus-within:tw-ring-4 focus-within:tw-ring-brand-500/10 focus-within:tw-border-brand-500/20 tw-transition-all">
                         <textarea
                           className="tw-w-full tw-px-8 tw-py-8 tw-bg-white tw-min-h-[400px] focus:tw-outline-none tw-text-base tw-leading-relaxed tw-resize-none tw-border-none"
-                          placeholder="输入发布内容，仅支持换行与分段..."
+                          placeholder="输入发布内容，支持换行与分段..."
                           value={editorHtml}
                           onChange={(e) => {
                             setEditorHtml(e.target.value);
@@ -418,7 +635,7 @@ export function QueuePage() {
 
                     <div className="tw-space-y-4">
                        <div className="tw-flex tw-items-center tw-justify-between">
-                          <label className="tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest tw-ml-1">媒体附件 (支持多选本地图片)</label>
+                          <label className="tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest tw-ml-1">媒体附件（支持多选本地图片）</label>
                           <button 
                             type="button"
                             onClick={handleBrowseFiles}
@@ -484,10 +701,10 @@ export function QueuePage() {
                             </div>
                             <div>
                                <p className="tw-text-xs tw-font-black tw-text-slate-900">
-                                 {accountsById.get(Number(accountId))?.name || '待选择账号'}
+                                  {accountsById.get(Number(accountId))?.name || '待选择账号'}
                                </p>
                                <p className="tw-text-[10px] tw-text-slate-400 tw-mt-0.5">
-                                 {scheduledAt ? `计划于 ${new Date(scheduledAt).toLocaleString()} 发布` : '未设置时间'}
+                                  {scheduledAt ? `计划于 ${new Date(scheduledAt).toLocaleString()} 发布` : '未设置时间'}
                                </p>
                             </div>
                          </div>
@@ -570,7 +787,7 @@ export function QueuePage() {
                           {taskMediaCount > 0 && (
                             <div className="tw-flex tw-items-center tw-gap-2 tw-mt-1.5">
                               <span className="tw-px-2 tw-py-0.5 tw-bg-blue-50/50 tw-text-blue-600 tw-rounded-md tw-text-[9px] tw-font-bold tw-flex tw-items-center tw-gap-1">
-                                <ImageIcon size={10} /> {taskMediaCount} 媒体文件
+                                <ImageIcon size={10} /> {taskMediaCount} 个媒体文件
                               </span>
                             </div>
                           )}
@@ -600,11 +817,11 @@ export function QueuePage() {
                                 ? 'tw-text-emerald-500'
                                 : 'tw-text-red-500'
                             }`}>
-                              {new Date(task.scheduledAt) > new Date() 
-                                ? '• 预约执行' 
-                                : task.status === 'published' 
-                                  ? '• 已按时发布' 
-                                  : '• 计划已超时'}
+                              {new Date(task.scheduledAt) > new Date()
+                                ? '预约执行'
+                                : task.status === 'published'
+                                  ? '已按时发布'
+                                  : '计划已超时'}
                             </span>
                           </div>
                         </div>
@@ -614,10 +831,10 @@ export function QueuePage() {
                       </td>
                       <td className="tw-px-8 tw-py-6 tw-whitespace-nowrap">
                         <div className="tw-flex tw-items-center tw-justify-end tw-gap-2">
-                          {task.status !== 'published' && post && (
+                          {task.status !== 'published' && (
                             <button 
-                              onClick={() => publishNow(post)}
-                              disabled={busyPost?.id === post.id}
+                              onClick={() => publishTaskNow(task)}
+                              disabled={busyTaskId === task.id}
                               className="tw-flex tw-items-center tw-gap-2 tw-px-5 tw-py-2 tw-bg-slate-900 tw-text-white tw-rounded-xl tw-text-[12px] tw-font-bold tw-shadow-sm hover:tw-bg-brand-600 tw-transition-all active:tw-scale-95 disabled:tw-opacity-50"
                             >
                               <Play size={14} />
@@ -643,6 +860,16 @@ export function QueuePage() {
                             <button onClick={() => editTask(task)} className="tw-p-2 tw-text-slate-300 hover:tw-text-blue-600 hover:tw-bg-slate-50 tw-rounded-xl tw-transition-all" title="编辑">
                               <Settings size={18} />
                             </button>
+                            {task.status !== 'published' && (
+                              <button
+                                onClick={() => void returnTaskToReview(task)}
+                                disabled={busyTaskId === task.id}
+                                className="tw-p-2 tw-text-slate-300 hover:tw-text-amber-600 hover:tw-bg-amber-50 tw-rounded-xl tw-transition-all disabled:tw-opacity-50"
+                                title="退回审核"
+                              >
+                                <ClipboardCheck size={18} />
+                              </button>
+                            )}
                             <button onClick={() => post && deleteTask(post.id)} className="tw-p-2 tw-text-slate-300 hover:tw-text-red-500 hover:tw-bg-red-50 tw-rounded-xl tw-transition-all" title="删除">
                               <Trash2 size={18} />
                             </button>
@@ -655,7 +882,7 @@ export function QueuePage() {
                         <td colSpan={5} className="tw-px-8 tw-py-6">
                           <div className="tw-bg-white tw-rounded-2xl tw-p-6 tw-border tw-border-slate-100 tw-shadow-sm tw-animate-fade-in">
                             <div className="tw-flex tw-items-center tw-justify-between tw-mb-4">
-                              <h4 className="tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest">任务执行链路追溯</h4>
+                              <h4 className="tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest">任务执行链路追踪</h4>
                               {task.lastError && (
                                 <div className="tw-flex tw-items-center tw-gap-2 tw-text-red-500 tw-bg-red-50 tw-px-3 tw-py-1 tw-rounded-lg">
                                   <AlertCircle size={12} />
@@ -701,7 +928,7 @@ export function QueuePage() {
             <Rocket size={40} />
           </div>
           <h3 className="tw-text-slate-900 tw-font-bold tw-text-lg">没有找到分发计划</h3>
-          <p className="tw-text-slate-400 tw-text-sm tw-mt-1">当前筛选条件下暂无任务，或者您可以点击右上方创建新任务</p>
+          <p className="tw-text-slate-400 tw-text-sm tw-mt-1">当前筛选条件下暂无任务，或点击右上方创建新任务。</p>
         </div>
       )}
     </div>

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { extractGeneratedContent } from '../../../shared/aiOutput.js';
 import type { AppDatabase } from '../../db/database.js';
 import type { WorkflowContext, WorkflowDefinition, WorkflowNode } from './types.js';
 
@@ -67,6 +68,14 @@ export class WorkflowRunner {
 
   private async runInternal(steps: WorkflowNode[], context: WorkflowContext): Promise<void> {
     await this.executePipeline(steps, context);
+    const generated = extractGeneratedContent(context.state);
+    if (generated) {
+      context.state.generatedContent = generated.content;
+      context.state.generatedContentSourceKey = generated.sourceKey;
+    }
+    const completedLog = { level: 'success' as const, message: `Workflow ${context.workflowId} completed`, time: new Date().toISOString() };
+    context.logs.push(completedLog);
+    if (context.onLog) context.onLog(completedLog);
     this.db.aiWorkflowRuns.updateStatus(context.runId, 'completed', context.state, context.logs, new Date().toISOString());
   }
 

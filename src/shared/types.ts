@@ -4,7 +4,10 @@ export type BrowserMode = 'manual_ws' | 'manual_port' | 'adspower' | 'bitbrowser
 export type PostStatus = 'draft' | 'queued' | 'publishing' | 'published' | 'failed' | 'needs_manual_action';
 export type LogLevel = 'info' | 'warning' | 'error';
 export type ContentSource = 'manual' | 'ai' | 'imported';
-export type ContentStatus = 'draft' | 'ready' | 'archived';
+export type ContentStatus = 'draft' | 'ready' | 'reviewing' | 'approved' | 'rejected' | 'scheduled' | 'published' | 'failed' | 'archived';
+export type ContentStyleStatus = 'active' | 'paused';
+export type ReviewMode = 'manual' | 'auto' | 'sample';
+export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'rewriting';
 
 export interface Account {
   id: number;
@@ -158,6 +161,15 @@ export interface ContentItem {
   body: string;
   source: ContentSource;
   status: ContentStatus;
+  tenantId: string;
+  accountId: number | null;
+  pluginCode: string;
+  styleId: string;
+  runId: string;
+  topicsJson: string[];
+  mediaJson: Record<string, unknown>[];
+  sourceJson: Record<string, unknown>;
+  riskJson: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
@@ -176,12 +188,91 @@ export interface CreateContentItemInput {
   body: string;
   source: ContentSource;
   status: ContentStatus;
+  tenantId?: string;
+  accountId?: number | null;
+  pluginCode?: string;
+  styleId?: string;
+  runId?: string;
+  topicsJson?: string[];
+  mediaJson?: Record<string, unknown>[];
+  sourceJson?: Record<string, unknown>;
+  riskJson?: Record<string, unknown>;
 }
 
 export interface UpdateContentItemInput {
   title: string;
   body: string;
   status: ContentStatus;
+}
+
+export interface ContentStyle {
+  id: string;
+  tenantId: string;
+  accountId: number | null;
+  pluginCode: string;
+  workflowCode: string;
+  name: string;
+  description: string;
+  promptTemplateId: string;
+  modelPolicyJson: Record<string, unknown>;
+  reviewPolicyJson: Record<string, unknown>;
+  dispatchPolicyJson: Record<string, unknown>;
+  dedupePolicyJson: Record<string, unknown>;
+  status: ContentStyleStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateContentStyleInput {
+  id?: string;
+  tenantId?: string;
+  accountId?: number | null;
+  pluginCode: string;
+  workflowCode: string;
+  name: string;
+  description?: string;
+  promptTemplateId?: string;
+  modelPolicyJson?: Record<string, unknown>;
+  reviewPolicyJson?: Record<string, unknown>;
+  dispatchPolicyJson?: Record<string, unknown>;
+  dedupePolicyJson?: Record<string, unknown>;
+  status?: ContentStyleStatus;
+}
+
+export interface UpdateContentStyleInput {
+  workflowCode?: string;
+  name?: string;
+  description?: string;
+  promptTemplateId?: string;
+  modelPolicyJson?: Record<string, unknown>;
+  reviewPolicyJson?: Record<string, unknown>;
+  dispatchPolicyJson?: Record<string, unknown>;
+  dedupePolicyJson?: Record<string, unknown>;
+  status?: ContentStyleStatus;
+}
+
+export interface CopyContentStyleInput {
+  targetAccountIds: number[];
+  nameSuffix?: string;
+}
+
+export interface ReviewItem {
+  id: number;
+  contentId: number;
+  reviewMode: ReviewMode;
+  status: ReviewStatus;
+  reviewerId: string;
+  comment: string;
+  approvedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateReviewItemInput {
+  contentId: number;
+  reviewMode: ReviewMode;
+  status: ReviewStatus;
+  comment?: string;
 }
 
 export interface DistributionTask {
@@ -308,4 +399,3 @@ export interface AiResponse {
   content: string;
   usage?: any;
 }
-

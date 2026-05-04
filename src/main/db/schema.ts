@@ -78,8 +78,18 @@ CREATE TABLE IF NOT EXISTS content_items (
   body TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT 'manual',
   status TEXT NOT NULL DEFAULT 'draft',
+  tenantId TEXT NOT NULL DEFAULT '',
+  accountId INTEGER,
+  pluginCode TEXT NOT NULL DEFAULT '',
+  styleId TEXT NOT NULL DEFAULT '',
+  runId TEXT NOT NULL DEFAULT '',
+  topicsJson TEXT NOT NULL DEFAULT '[]',
+  mediaJson TEXT NOT NULL DEFAULT '[]',
+  sourceJson TEXT NOT NULL DEFAULT '{}',
+  riskJson TEXT NOT NULL DEFAULT '{}',
   createdAt TEXT NOT NULL,
-  updatedAt TEXT NOT NULL
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (accountId) REFERENCES accounts(id)
 );
 
 CREATE TABLE IF NOT EXISTS content_versions (
@@ -142,6 +152,44 @@ CREATE INDEX IF NOT EXISTS idx_distribution_tasks_account_status ON distribution
 CREATE INDEX IF NOT EXISTS idx_distribution_tasks_legacy_post ON distribution_tasks(legacyPostId);
 CREATE INDEX IF NOT EXISTS idx_publish_runs_task_created ON publish_runs(taskId, createdAt);
 CREATE INDEX IF NOT EXISTS idx_publish_runs_platform_status ON publish_runs(platform, status);
+
+CREATE TABLE IF NOT EXISTS content_styles (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL DEFAULT '',
+  accountId INTEGER,
+  pluginCode TEXT NOT NULL,
+  workflowCode TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  promptTemplateId TEXT NOT NULL DEFAULT '',
+  modelPolicyJson TEXT NOT NULL DEFAULT '{}',
+  reviewPolicyJson TEXT NOT NULL DEFAULT '{}',
+  dispatchPolicyJson TEXT NOT NULL DEFAULT '{}',
+  dedupePolicyJson TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'active',
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (accountId) REFERENCES accounts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_styles_account_plugin ON content_styles(accountId, pluginCode);
+CREATE INDEX IF NOT EXISTS idx_content_styles_plugin_status ON content_styles(pluginCode, status);
+
+CREATE TABLE IF NOT EXISTS review_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contentId INTEGER NOT NULL,
+  reviewMode TEXT NOT NULL DEFAULT 'manual',
+  status TEXT NOT NULL DEFAULT 'pending',
+  reviewerId TEXT NOT NULL DEFAULT '',
+  comment TEXT NOT NULL DEFAULT '',
+  approvedAt TEXT NOT NULL DEFAULT '',
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (contentId) REFERENCES content_items(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_items_status ON review_items(status);
+CREATE INDEX IF NOT EXISTS idx_review_items_content ON review_items(contentId);
 
 CREATE TABLE IF NOT EXISTS ai_plugins (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

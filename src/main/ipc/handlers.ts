@@ -1,6 +1,6 @@
 import electron from 'electron';
 import http from 'node:http';
-import type { ConnectionTestResult, CreateAccountInput, CreateContentItemInput, CreatePostInput, DeleteAccountResult, DeletePostResult, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateDistributionTaskInput } from '../../shared/types.js';
+import type { ConnectionTestResult, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput } from '../../shared/types.js';
 import { fetchAdsPowerProfiles, startAdsPowerBrowser } from '../browser/AdsPowerApi.js';
 import { createConnectorForAccount } from '../browser/BrowserConnectorFactory.js';
 import { inspectFirstPage } from '../browser/RawCdpClient.js';
@@ -14,10 +14,12 @@ import { PublishScheduler } from '../publisher/Scheduler.js';
 import { WeiboPublisher } from '../publisher/WeiboPublisher.js';
 import { listPlatformCapabilities } from '../platforms/registry.js';
 import { checkForUpdates, readUpdateConfig } from '../updater/UpdateService.js';
-import { aiService, type AiGenerateOptions, type AiImageOptions } from '../services/AiService.js';
+import { AiService, aiService, type AiGenerateOptions, type AiImageOptions } from '../services/AiService.js';
 import { getWorkflowEngine } from '../core/workflow/EngineRegistry.js';
+import { createWorkflowRunner } from '../core/workflow/EngineRegistry.js';
 import { ImageGenTool } from '../core/tools/ImageGenTool.js';
 import type { ITool } from '../core/tools/ITool.js';
+import type { WorkflowDefinition } from '../core/workflow/types.js';
 
 
 const { app, BrowserWindow, dialog, ipcMain } = electron;
@@ -358,11 +360,16 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   }));
   ipcMain.handle('contents:versions', (_event, id: number) => repositories.contentItems.listVersions(id));
   ipcMain.handle('distributionTasks:list', () => repositories.distributionTasks.list());
+  ipcMain.handle('distributionTasks:create', (_event, input: CreateDistributionTaskInput) => repositories.distributionTasks.create(input));
   ipcMain.handle('distributionTasks:update', (_event, id: number, input: UpdateDistributionTaskInput) => repositories.distributionTasks.update(id, input));
   ipcMain.handle('distributionTasks:retry', (_event, id: number) => repositories.distributionTasks.retry(id));
   ipcMain.handle('distributionTasks:cancel', (_event, id: number) => repositories.distributionTasks.cancel(id));
+  ipcMain.handle('distributionTasks:publishNow', (_event, id: number) => scheduler.publishTaskNow(id));
   ipcMain.handle('distributionTasks:retryMany', (_event, ids: number[]) => repositories.distributionTasks.retryMany(ids));
   ipcMain.handle('distributionTasks:cancelMany', (_event, ids: number[]) => repositories.distributionTasks.cancelMany(ids));
+  ipcMain.handle('distributionTasks:returnToReview', (_event, id: number, comment?: string) => (
+    repositories.distributionTasks.returnToReview(id, comment ?? 'Returned to review')
+  ));
   ipcMain.handle('platformCapabilities:list', () => listPlatformCapabilities());
   ipcMain.handle('publishRuns:list', (_event, taskId?: number) => (
     taskId ? repositories.publishRuns.listByTask(taskId) : repositories.publishRuns.list()
@@ -377,7 +384,19 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
 
   // AI Orchestrator Handlers
   ipcMain.handle('ai:listPlugins', () => repositories.aiPlugins.list());
+  ipcMain.handle('ai:listStyles', (_event, accountId: number, pluginCode?: string) => (
+    repositories.contentStyles.listForAccount(accountId, pluginCode)
+  ));
+  ipcMain.handle('ai:createStyle', (_event, input: CreateContentStyleInput) => repositories.contentStyles.create(input));
+  ipcMain.handle('ai:updateStyle', (_event, id: string, input: UpdateContentStyleInput) => repositories.contentStyles.update(id, input));
+  ipcMain.handle('ai:copyStyleToAccounts', (_event, id: string, input: CopyContentStyleInput) => (
+    repositories.contentStyles.copyToAccounts(id, input.targetAccountIds, input.nameSuffix)
+  ));
   ipcMain.handle('ai:listWorkflows', (_event, pluginCode: string) => repositories.aiWorkflows.listByPlugin(pluginCode));
+  ipcMain.handle('ai:startWorkflowRun', async (event, input: StartWorkflowRunInput) => (
+    startWorkflowRun(event, repositories, input)
+  ));
+  ipcMain.handle('ai:getWorkflowRun', (_event, runId: string) => repositories.aiWorkflowRuns.findByRunId(runId));
   ipcMain.handle('ai:previewWorkflow_v3', async (event, pluginCode: string, workflowCode: string, inputParams: any) => {
     return handlePreviewWorkflow(event, repositories, pluginCode, workflowCode, inputParams);
   });
@@ -386,6 +405,91 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
     // In production, this would register a node-cron job or an interval.
     return { ok: true, message: `Scheduled agent for account ${accountId}` };
   });
+  ipcMain.handle('review:listItems', () => repositories.reviewItems.listPending());
+  ipcMain.handle('review:create', (_event, input: CreateReviewItemInput) => repositories.reviewItems.create(input));
+  ipcMain.handle('review:approve', (_event, id: number, reviewerId: string, comment?: string) => (
+    repositories.reviewItems.approve(id, reviewerId, comment ?? '')
+  ));
+  ipcMain.handle('review:reject', (_event, id: number, reviewerId: string, comment?: string) => (
+    repositories.reviewItems.reject(id, reviewerId, comment ?? '')
+  ));
+  ipcMain.handle('review:rewrite', async (_event, id: number, reviewerId: string, comment?: string, rewrittenBody?: string) => (
+    rewriteReviewItem(repositories, aiService, id, reviewerId, comment ?? '', rewrittenBody)
+  ));
+}
+
+type StartWorkflowRunInput = {
+  accountId: number | null;
+  pluginCode: string;
+  workflowCode: string;
+  inputParams?: Record<string, unknown>;
+};
+
+async function rewriteReviewItem(
+  repositories: AppDatabase,
+  service: AiService,
+  id: number,
+  reviewerId: string,
+  comment: string,
+  rewrittenBody?: string,
+) {
+  if (rewrittenBody?.trim()) {
+    return repositories.reviewItems.applyRewrite(id, reviewerId, comment, rewrittenBody.trim());
+  }
+
+  const review = repositories.reviewItems.requestRewrite(id, reviewerId, comment);
+  const content = repositories.contentItems.findById(review.contentId);
+  if (!content) {
+    return review;
+  }
+
+  const prompt = [
+    '请根据审核意见重写下面这条微博内容。',
+    '要求：保留核心事实，不扩写为长文，不添加未经提供的新事实，语气自然，适合微博发布。',
+    `审核意见：${comment || '请优化表达方式'}`,
+    `原文：${content.body}`,
+    '只输出重写后的微博正文。',
+  ].join('\n\n');
+  try {
+    const generated = await service.generateText({ prompt, model: 'qwen-turbo', maxTokens: 800 });
+    const nextBody = generated.content.trim();
+    if (!nextBody) {
+      return review;
+    }
+
+    return repositories.reviewItems.applyRewrite(id, reviewerId, comment, nextBody);
+  } catch (error) {
+    console.warn('[review-rewrite] AI rewrite failed; review item remains in rewriting state.', error);
+    return review;
+  }
+}
+
+async function startWorkflowRun(event: any, repositories: AppDatabase, input: StartWorkflowRunInput) {
+  const workflowRecord = repositories.aiWorkflows.findByCode(input.pluginCode.trim(), input.workflowCode.trim());
+  if (!workflowRecord) {
+    throw new Error(`Workflow ${input.workflowCode} not found`);
+  }
+
+  const definition = {
+    ...workflowRecord.definitionJson,
+    pluginCode: workflowRecord.pluginCode,
+    workflowId: workflowRecord.code,
+    trigger: String(workflowRecord.definitionJson.trigger ?? 'manual'),
+    steps: Array.isArray(workflowRecord.definitionJson.steps) ? workflowRecord.definitionJson.steps : [],
+  } as WorkflowDefinition;
+  const runner = createWorkflowRunner(repositories);
+  const runId = await runner.start(
+    definition,
+    input.accountId ?? null,
+    input.inputParams ?? {},
+    (log) => {
+      if (event?.sender) {
+        event.sender.send('ai:workflow-log', { runId, ...log });
+      }
+    },
+  );
+
+  return repositories.aiWorkflowRuns.findByRunId(runId);
 }
 
 
@@ -474,6 +578,8 @@ let currentHttpRepositories: AppDatabase | null = null;
 
 export function startHttpApi(repositories: AppDatabase, scheduler: PublishScheduler, port = Number(repositories.settings.get('http.port') ?? 5183)) {
   currentHttpRepositories = repositories;
+  const httpAiService = new AiService();
+  httpAiService.init(repositories);
   const server = http.createServer(async (request, response) => {
     try {
       if (request.method === 'OPTIONS') {
@@ -592,6 +698,12 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
         return;
       }
 
+      if (request.method === 'POST' && request.url === '/distribution-tasks') {
+        const input = await readBody(request) as CreateDistributionTaskInput;
+        sendJson(request, response, 200, repositories.distributionTasks.create(input));
+        return;
+      }
+
       const distributionTaskMatch = request.url?.match(/^\/distribution-tasks\/(\d+)$/);
       if (request.method === 'PATCH' && distributionTaskMatch) {
         const input = await readBody(request) as UpdateDistributionTaskInput;
@@ -602,6 +714,12 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
       const distributionRetryMatch = request.url?.match(/^\/distribution-tasks\/(\d+)\/retry$/);
       if (request.method === 'POST' && distributionRetryMatch) {
         sendJson(request, response, 200, repositories.distributionTasks.retry(Number(distributionRetryMatch[1])));
+        return;
+      }
+
+      const distributionPublishNowMatch = request.url?.match(/^\/distribution-tasks\/(\d+)\/publish-now$/);
+      if (request.method === 'POST' && distributionPublishNowMatch) {
+        sendJson(request, response, 200, await scheduler.publishTaskNow(Number(distributionPublishNowMatch[1])));
         return;
       }
 
@@ -617,6 +735,16 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
         return;
       }
 
+      const distributionReturnReviewMatch = request.url?.match(/^\/distribution-tasks\/(\d+)\/return-review$/);
+      if (request.method === 'POST' && distributionReturnReviewMatch) {
+        const input = await readBody(request) as { comment?: string };
+        sendJson(request, response, 200, repositories.distributionTasks.returnToReview(
+          Number(distributionReturnReviewMatch[1]),
+          input.comment ?? 'Returned to review',
+        ));
+        return;
+      }
+
       if (request.method === 'POST' && request.url === '/distribution-tasks/cancel-many') {
         const input = await readBody(request) as { ids: number[] };
         sendJson(request, response, 200, repositories.distributionTasks.cancelMany(input.ids));
@@ -628,6 +756,88 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
       if (request.method === 'GET' && requestUrl.pathname === '/publish-runs') {
         const taskId = requestUrl.searchParams.get('taskId');
         sendJson(request, response, 200, taskId ? repositories.publishRuns.listByTask(Number(taskId)) : repositories.publishRuns.list());
+        return;
+      }
+
+      if (request.method === 'GET' && requestUrl.pathname === '/ai/styles') {
+        const accountId = Number(requestUrl.searchParams.get('accountId'));
+        if (!Number.isFinite(accountId) || accountId <= 0) {
+          sendJson(request, response, 400, { error: 'accountId is required' });
+          return;
+        }
+        const pluginCode = requestUrl.searchParams.get('pluginCode') ?? undefined;
+        sendJson(request, response, 200, repositories.contentStyles.listForAccount(accountId, pluginCode));
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/ai/styles') {
+        const input = await readBody(request) as CreateContentStyleInput;
+        sendJson(request, response, 200, repositories.contentStyles.create(input));
+        return;
+      }
+
+      const styleMatch = requestUrl.pathname.match(/^\/ai\/styles\/([^\/]+)$/);
+      if (request.method === 'PUT' && styleMatch) {
+        const input = await readBody(request) as UpdateContentStyleInput;
+        sendJson(request, response, 200, repositories.contentStyles.update(decodeURIComponent(styleMatch[1]), input));
+        return;
+      }
+
+      const styleCopyMatch = requestUrl.pathname.match(/^\/ai\/styles\/([^\/]+)\/copy-to-accounts$/);
+      if (request.method === 'POST' && styleCopyMatch) {
+        const input = await readBody(request) as CopyContentStyleInput;
+        sendJson(request, response, 200, repositories.contentStyles.copyToAccounts(
+          decodeURIComponent(styleCopyMatch[1]),
+          input.targetAccountIds,
+          input.nameSuffix,
+        ));
+        return;
+      }
+
+      if (request.method === 'GET' && requestUrl.pathname === '/review-items') {
+        sendJson(request, response, 200, repositories.reviewItems.listPending());
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/review-items') {
+        const input = await readBody(request) as CreateReviewItemInput;
+        sendJson(request, response, 200, repositories.reviewItems.create(input));
+        return;
+      }
+
+      const reviewApproveMatch = requestUrl.pathname.match(/^\/review-items\/(\d+)\/approve$/);
+      if (request.method === 'POST' && reviewApproveMatch) {
+        const input = await readBody(request) as { reviewerId?: string; comment?: string };
+        sendJson(request, response, 200, repositories.reviewItems.approve(
+          Number(reviewApproveMatch[1]),
+          input.reviewerId ?? 'operator',
+          input.comment ?? '',
+        ));
+        return;
+      }
+
+      const reviewRejectMatch = requestUrl.pathname.match(/^\/review-items\/(\d+)\/reject$/);
+      if (request.method === 'POST' && reviewRejectMatch) {
+        const input = await readBody(request) as { reviewerId?: string; comment?: string };
+        sendJson(request, response, 200, repositories.reviewItems.reject(
+          Number(reviewRejectMatch[1]),
+          input.reviewerId ?? 'operator',
+          input.comment ?? '',
+        ));
+        return;
+      }
+
+      const reviewRewriteMatch = requestUrl.pathname.match(/^\/review-items\/(\d+)\/rewrite$/);
+      if (request.method === 'POST' && reviewRewriteMatch) {
+        const input = await readBody(request) as { reviewerId?: string; comment?: string; rewrittenBody?: string };
+        sendJson(request, response, 200, await rewriteReviewItem(
+          repositories,
+          httpAiService,
+          Number(reviewRewriteMatch[1]),
+          input.reviewerId ?? 'operator',
+          input.comment ?? '',
+          input.rewrittenBody,
+        ));
         return;
       }
 
@@ -685,8 +895,8 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
         return;
       }
 
-      if (request.method === 'GET' && request.url === '/ai/hot-topics') {
-        sendJson(request, response, 200, await aiService.fetchHotTopics());
+      if (request.method === 'GET' && requestUrl.pathname === '/ai/hot-topics') {
+        sendJson(request, response, 200, await httpAiService.fetchHotTopics(requestUrl.searchParams.get('force') === 'true'));
         return;
       }
 
@@ -701,6 +911,19 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
         return;
       }
 
+      if (request.method === 'POST' && requestUrl.pathname === '/ai/workflow-runs') {
+        const input = await readBody(request) as StartWorkflowRunInput;
+        sendJson(request, response, 200, await startWorkflowRun(null as any, repositories, input));
+        return;
+      }
+
+      const workflowRunMatch = requestUrl.pathname.match(/^\/ai\/workflow-runs\/([^\/]+)$/);
+      if (request.method === 'GET' && workflowRunMatch) {
+        const run = repositories.aiWorkflowRuns.findByRunId(decodeURIComponent(workflowRunMatch[1]));
+        sendJson(request, response, run ? 200 : 404, run ?? { error: 'Workflow run not found' });
+        return;
+      }
+
       const previewMatch = request.url?.match(/^\/ai\/plugins\/([^\/]+)\/workflows\/([^\/]+)\/preview$/);
       if (request.method === 'POST' && previewMatch) {
         const input = await readBody(request);
@@ -711,13 +934,13 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
 
       if (request.method === 'POST' && request.url === '/ai/generate') {
         const input = await readBody(request) as AiGenerateOptions;
-        sendJson(request, response, 200, await aiService.generateText(input));
+        sendJson(request, response, 200, await httpAiService.generateText(input));
         return;
       }
 
       if (request.method === 'POST' && request.url === '/ai/generate-image') {
         const input = await readBody(request) as AiImageOptions;
-        sendJson(request, response, 200, { url: await aiService.generateImage(input) });
+        sendJson(request, response, 200, { url: await httpAiService.generateImage(input) });
         return;
       }
 

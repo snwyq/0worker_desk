@@ -101,7 +101,7 @@ export function App() {
       case 'agent-engine': return <AgentEnginePage />;
       case 'accounts': return <AccountsPage />;
       case 'distribution': return <QueuePage />;
-      case 'hot-topics': return <HotTopicsPage />;
+      case 'hot-topics': return <HotTopicsPage onOpenAgent={() => openModule('agent-engine')} />;
       case 'settings': return <SettingsPage />;
       default: return <HomePage />;
     }

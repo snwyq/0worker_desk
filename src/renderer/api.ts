@@ -1,4 +1,4 @@
-import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AppSetting, ConnectionTestResult, ContentItem, CreateAccountInput, CreateContentItemInput, CreatePostInput, DeleteAccountResult, DeletePostResult, DistributionTask, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateDistributionTaskInput } from '../shared/types';
+import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AiWorkflowRun, AppSetting, ConnectionTestResult, ContentItem, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DistributionTask, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput } from '../shared/types';
 
 
 const httpBaseUrl = 'http://127.0.0.1:5183';
@@ -222,6 +222,15 @@ export const appApi = {
       }
       return httpJson<DistributionTask[]>('/distribution-tasks');
     },
+    create: (input: CreateDistributionTaskInput): Promise<DistributionTask> => {
+      if (window.weiboPublisher?.distributionTasks) {
+        return window.weiboPublisher.distributionTasks.create(input);
+      }
+      return httpJson<DistributionTask>('/distribution-tasks', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
     update: (id: number, input: UpdateDistributionTaskInput): Promise<DistributionTask> => {
       if (window.weiboPublisher?.distributionTasks) {
         return window.weiboPublisher.distributionTasks.update(id, input);
@@ -247,6 +256,14 @@ export const appApi = {
         method: 'POST',
       });
     },
+    publishNow: (id: number): Promise<PublishAttemptResult> => {
+      if (window.weiboPublisher?.distributionTasks?.publishNow) {
+        return window.weiboPublisher.distributionTasks.publishNow(id);
+      }
+      return httpJson<PublishAttemptResult>(`/distribution-tasks/${id}/publish-now`, {
+        method: 'POST',
+      });
+    },
     retryMany: (ids: number[]): Promise<DistributionTask[]> => {
       if (window.weiboPublisher?.distributionTasks) {
         return window.weiboPublisher.distributionTasks.retryMany(ids);
@@ -263,6 +280,15 @@ export const appApi = {
       return httpJson<DistributionTask[]>('/distribution-tasks/cancel-many', {
         method: 'POST',
         body: JSON.stringify({ ids }),
+      });
+    },
+    returnToReview: (id: number, comment = 'Returned to review'): Promise<DistributionTask> => {
+      if (window.weiboPublisher?.distributionTasks?.returnToReview) {
+        return window.weiboPublisher.distributionTasks.returnToReview(id, comment);
+      }
+      return httpJson<DistributionTask>(`/distribution-tasks/${id}/return-review`, {
+        method: 'POST',
+        body: JSON.stringify({ comment }),
       });
     },
   },
@@ -329,11 +355,68 @@ export const appApi = {
       }
       return httpJson<AiPlugin[]>('/ai/plugins');
     },
+    listStyles: (accountId: number, pluginCode?: string): Promise<ContentStyle[]> => {
+      if (window.weiboPublisher?.ai?.listStyles) {
+        return window.weiboPublisher.ai.listStyles(accountId, pluginCode);
+      }
+      const query = new URLSearchParams({ accountId: String(accountId) });
+      if (pluginCode) {
+        query.set('pluginCode', pluginCode);
+      }
+      return httpJson<ContentStyle[]>(`/ai/styles?${query.toString()}`);
+    },
+    createStyle: (input: CreateContentStyleInput): Promise<ContentStyle> => {
+      if (window.weiboPublisher?.ai?.createStyle) {
+        return window.weiboPublisher.ai.createStyle(input);
+      }
+      return httpJson<ContentStyle>('/ai/styles', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+    updateStyle: (id: string, input: UpdateContentStyleInput): Promise<ContentStyle> => {
+      if (window.weiboPublisher?.ai?.updateStyle) {
+        return window.weiboPublisher.ai.updateStyle(id, input);
+      }
+      return httpJson<ContentStyle>(`/ai/styles/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      });
+    },
+    copyStyleToAccounts: (id: string, input: CopyContentStyleInput): Promise<ContentStyle[]> => {
+      if (window.weiboPublisher?.ai?.copyStyleToAccounts) {
+        return window.weiboPublisher.ai.copyStyleToAccounts(id, input);
+      }
+      return httpJson<ContentStyle[]>(`/ai/styles/${encodeURIComponent(id)}/copy-to-accounts`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
     listWorkflows: (pluginCode: string): Promise<AiWorkflow[]> => {
       if (window.weiboPublisher?.ai) {
         return window.weiboPublisher.ai.listWorkflows(pluginCode);
       }
       return httpJson<AiWorkflow[]>(`/ai/plugins/${pluginCode}/workflows`);
+    },
+    startWorkflowRun: (input: {
+      accountId: number | null;
+      pluginCode: string;
+      workflowCode: string;
+      inputParams?: Record<string, unknown>;
+    }): Promise<AiWorkflowRun> => {
+      if (window.weiboPublisher?.ai?.startWorkflowRun) {
+        return window.weiboPublisher.ai.startWorkflowRun(input);
+      }
+      return httpJson<AiWorkflowRun>('/ai/workflow-runs', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+    getWorkflowRun: (runId: string): Promise<AiWorkflowRun | null> => {
+      if (window.weiboPublisher?.ai?.getWorkflowRun) {
+        return window.weiboPublisher.ai.getWorkflowRun(runId);
+      }
+      return httpJson<AiWorkflowRun>(`/ai/workflow-runs/${encodeURIComponent(runId)}`);
     },
     listHotTopics: async (force = false): Promise<{ items: any[], lastFetchTime: string | null }> => {
       if (window.weiboPublisher?.ai) {
@@ -363,5 +446,48 @@ export const appApi = {
       return () => {};
     },
   },
+  review: {
+    listItems: (): Promise<ReviewItem[]> => {
+      if (window.weiboPublisher?.review) {
+        return window.weiboPublisher.review.listItems();
+      }
+      return httpJson<ReviewItem[]>('/review-items');
+    },
+    create: (input: CreateReviewItemInput): Promise<ReviewItem> => {
+      if (window.weiboPublisher?.review) {
+        return window.weiboPublisher.review.create(input);
+      }
+      return httpJson<ReviewItem>('/review-items', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+    approve: (id: number, reviewerId: string, comment = ''): Promise<ReviewItem> => {
+      if (window.weiboPublisher?.review) {
+        return window.weiboPublisher.review.approve(id, reviewerId, comment);
+      }
+      return httpJson<ReviewItem>(`/review-items/${id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ reviewerId, comment }),
+      });
+    },
+    reject: (id: number, reviewerId: string, comment = ''): Promise<ReviewItem> => {
+      if (window.weiboPublisher?.review?.reject) {
+        return window.weiboPublisher.review.reject(id, reviewerId, comment);
+      }
+      return httpJson<ReviewItem>(`/review-items/${id}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ reviewerId, comment }),
+      });
+    },
+    rewrite: (id: number, reviewerId: string, comment = '', rewrittenBody?: string): Promise<ReviewItem> => {
+      if (window.weiboPublisher?.review?.rewrite) {
+        return window.weiboPublisher.review.rewrite(id, reviewerId, comment, rewrittenBody);
+      }
+      return httpJson<ReviewItem>(`/review-items/${id}/rewrite`, {
+        method: 'POST',
+        body: JSON.stringify({ reviewerId, comment, rewrittenBody }),
+      });
+    },
+  },
 };
-

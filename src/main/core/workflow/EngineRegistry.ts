@@ -11,21 +11,26 @@ import { WorkflowScheduler } from './WorkflowScheduler.js';
 let sharedRunner: WorkflowRunner | null = null;
 let sharedScheduler: WorkflowScheduler | null = null;
 
-export function initializeWorkflowEngine(db: AppDatabase): WorkflowRunner {
-  if (sharedRunner) return sharedRunner;
-
+export function createWorkflowRunner(db: AppDatabase): WorkflowRunner {
   const runner = new WorkflowRunner(db);
   
   // Register Core Tools
   runner.registerTool('llm', new LlmTool());
   runner.registerTool('search', new SearchTool());
-  runner.registerTool('tophub_search', new TopHubTool());
+  runner.registerTool('tophub_search', new TopHubTool(db));
   runner.registerTool('persist', new PersistTool(db));
   
   // Register Client Specific Tools
   runner.registerTool('bazi_calc', new BaziTool());
   runner.registerTool('image_gen', new ImageGenTool());
 
+  return runner;
+}
+
+export function initializeWorkflowEngine(db: AppDatabase): WorkflowRunner {
+  if (sharedRunner) return sharedRunner;
+
+  const runner = createWorkflowRunner(db);
   sharedRunner = runner;
   
   // Initialize Scheduler

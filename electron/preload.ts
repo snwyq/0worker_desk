@@ -1,5 +1,5 @@
 import electron from 'electron';
-import type { CreateAccountInput, CreateContentItemInput, CreatePostInput, UpdateAccountInput, UpdateContentItemInput, UpdateDistributionTaskInput } from '../src/shared/types.js';
+import type { CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreatePostInput, CreateReviewItemInput, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput } from '../src/shared/types.js';
 
 const { contextBridge, ipcRenderer } = electron;
 
@@ -48,11 +48,14 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
   },
   distributionTasks: {
     list: () => ipcRenderer.invoke('distributionTasks:list'),
+    create: (input: CreateDistributionTaskInput) => ipcRenderer.invoke('distributionTasks:create', input),
     update: (id: number, input: UpdateDistributionTaskInput) => ipcRenderer.invoke('distributionTasks:update', id, input),
     retry: (id: number) => ipcRenderer.invoke('distributionTasks:retry', id),
     cancel: (id: number) => ipcRenderer.invoke('distributionTasks:cancel', id),
+    publishNow: (id: number) => ipcRenderer.invoke('distributionTasks:publishNow', id),
     retryMany: (ids: number[]) => ipcRenderer.invoke('distributionTasks:retryMany', ids),
     cancelMany: (ids: number[]) => ipcRenderer.invoke('distributionTasks:cancelMany', ids),
+    returnToReview: (id: number, comment?: string) => ipcRenderer.invoke('distributionTasks:returnToReview', id, comment),
   },
   publishRuns: {
     list: (taskId?: number) => ipcRenderer.invoke('publishRuns:list', taskId),
@@ -71,8 +74,14 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
     generate: (options: any) => ipcRenderer.invoke('ai:generate', options),
     generateImage: (options: any) => ipcRenderer.invoke('ai:generateImage', options),
     listPlugins: () => ipcRenderer.invoke('ai:listPlugins'),
+    listStyles: (accountId: number, pluginCode?: string) => ipcRenderer.invoke('ai:listStyles', accountId, pluginCode),
+    createStyle: (input: CreateContentStyleInput) => ipcRenderer.invoke('ai:createStyle', input),
+    updateStyle: (id: string, input: UpdateContentStyleInput) => ipcRenderer.invoke('ai:updateStyle', id, input),
+    copyStyleToAccounts: (id: string, input: CopyContentStyleInput) => ipcRenderer.invoke('ai:copyStyleToAccounts', id, input),
     listWorkflows: (pluginCode: string) => ipcRenderer.invoke('ai:listWorkflows', pluginCode),
-    listHotTopics: () => ipcRenderer.invoke('ai:listHotTopics'),
+    startWorkflowRun: (input: any) => ipcRenderer.invoke('ai:startWorkflowRun', input),
+    getWorkflowRun: (runId: string) => ipcRenderer.invoke('ai:getWorkflowRun', runId),
+    listHotTopics: (force?: boolean) => ipcRenderer.invoke('ai:listHotTopics', force),
     previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any) => ipcRenderer.invoke('ai:previewWorkflow_v3', pluginCode, workflowCode, inputParams),
     startAgentSchedule: (accountId: number) => ipcRenderer.invoke('ai:startAgentSchedule', accountId),
     onWorkflowLog: (callback: any) => {
@@ -81,5 +90,13 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
       return () => ipcRenderer.removeListener('ai:workflow-log', subscription);
     },
   },
+  review: {
+    listItems: () => ipcRenderer.invoke('review:listItems'),
+    create: (input: CreateReviewItemInput) => ipcRenderer.invoke('review:create', input),
+    approve: (id: number, reviewerId: string, comment?: string) => ipcRenderer.invoke('review:approve', id, reviewerId, comment),
+    reject: (id: number, reviewerId: string, comment?: string) => ipcRenderer.invoke('review:reject', id, reviewerId, comment),
+    rewrite: (id: number, reviewerId: string, comment?: string, rewrittenBody?: string) => (
+      ipcRenderer.invoke('review:rewrite', id, reviewerId, comment, rewrittenBody)
+    ),
+  },
 });
-

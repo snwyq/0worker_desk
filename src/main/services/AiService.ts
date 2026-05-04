@@ -23,7 +23,8 @@ export class AiService {
   }
 
   private get dashscopeKey() {
-    return this.db?.settings.get('ai.dashscopeKey') || process.env.DASH_SCOPE_API_KEY || '';
+    const dbKey = this.db?.settings.get('ai.dashscopeKey');
+    return dbKey !== undefined && dbKey !== null ? dbKey : process.env.DASH_SCOPE_API_KEY || '';
   }
 
   private get apiyiKey() {
@@ -163,8 +164,8 @@ export class AiService {
     console.log('[AI-DEBUG] Fetching new data from Tophub...');
     
     // 真实抓取
-    const TOPHUB_API_KEY = this.db?.settings.get('ai.tophubKey') || '06d2a2c31c219c88ea3ee3fe1b7bb33c';
-    const TOPHUB_BASE_URL = 'https://api.tophubdata.com/nodes';
+    const TOPHUB_API_KEY = this.db?.settings.get('ai.tophubKey') || process.env.TOPHUB_API_KEY || '06d2a2c31c219c88ea3ee3fe1b7bb33c';
+    const TOPHUB_BASE_URL = this.db?.settings.get('ai.tophubBaseUrl') || process.env.TOPHUB_BASE_URL || 'https://api.tophubdata.com/nodes';
     
     const nodes = [
       { hashid: '3QeLwJEd7k', source_name: '微博' },
@@ -203,9 +204,10 @@ export class AiService {
         this.db.hotTopicsHistory.saveMany(finalItems);
       }
 
+      const cachedItems = this.db.hotTopicsHistory.getLatest() || [];
       const finalTime = this.db.hotTopicsHistory.getLastFetchTime() || new Date().toISOString();
       return {
-        items: finalItems,
+        items: finalItems.length > 0 ? finalItems : cachedItems,
         lastFetchTime: finalTime
       };
 

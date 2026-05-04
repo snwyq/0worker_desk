@@ -3,6 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createDatabase } from '../../src/main/db/database.js';
+import { PersistTool } from '../../src/main/core/tools/PersistTool.js';
+import { decideReviewPolicy } from '../../src/main/core/review/ReviewPolicy.js';
+import { PublishScheduler } from '../../src/main/publisher/Scheduler.js';
+import type { WorkflowContext } from '../../src/main/core/workflow/types.js';
 
 describe('database repositories', () => {
   test('persists data through native sqlite without exporting the whole database', async () => {
@@ -88,6 +92,482 @@ describe('database repositories', () => {
     }));
   });
 
+  test('seeds content styles and creates traceable AI review items', async () => {
+    const db = await createDatabase(':memory:');
+
+    const account = db.accounts.create({
+      name: 'maoxiaoxian weibo',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+      activePluginCode: 'maoxiaoxian',
+    });
+
+    const styles = db.contentStyles.listForAccount(account.id, 'maoxiaoxian');
+
+    expect(styles.map((style) => style.name)).toEqual([
+      '热点人物命理解读',
+      '治愈系情绪价值',
+      '犀利热点点评',
+      '国学/面相泛内容',
+    ]);
+
+    const content = db.contentItems.create({
+      title: '热点人物样稿',
+      body: '这是一条需要审核的热点人物命理解读微博。',
+      source: 'ai',
+      status: 'reviewing',
+      tenantId: 'tenant_default',
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: styles[0].id,
+      runId: 'run_test_001',
+      topicsJson: ['热点人物', '猫小仙'],
+      sourceJson: {
+        person: { name: '测试人物', birthdayConfidence: 0.62 },
+      },
+      riskJson: {
+        score: 38,
+        flags: ['public_figure'],
+      },
+    });
+
+    const review = db.reviewItems.create({
+      contentId: content.id,
+      reviewMode: 'manual',
+      status: 'pending',
+      comment: '',
+    });
+
+    for (const style of styles) {
+      expect(db.aiWorkflows.findByCode(style.pluginCode, style.workflowCode)).toEqual(expect.objectContaining({
+        pluginCode: style.pluginCode,
+        code: style.workflowCode,
+      }));
+    }
+
+    const pending = db.reviewItems.listPending();
+    const approved = db.reviewItems.approve(review.id, 'operator_001', '资料已核验');
+
+    expect(content).toMatchObject({
+      tenantId: 'tenant_default',
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: styles[0].id,
+      runId: 'run_test_001',
+      topicsJson: ['热点人物', '猫小仙'],
+      sourceJson: {
+        person: { name: '测试人物', birthdayConfidence: 0.62 },
+      },
+      riskJson: {
+        score: 38,
+        flags: ['public_figure'],
+      },
+    });
+    expect(pending).toContainEqual(expect.objectContaining({
+      id: review.id,
+      contentId: content.id,
+      status: 'pending',
+    }));
+    expect(approved).toMatchObject({
+      id: review.id,
+      status: 'approved',
+      reviewerId: 'operator_001',
+      comment: '资料已核验',
+    });
+    expect(db.contentItems.findById(content.id)).toMatchObject({
+      id: content.id,
+      status: 'approved',
+    });
+  });
+
+  test('creates and updates account scoped content styles', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'style owner',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+      activePluginCode: 'maoxiaoxian',
+    });
+
+    const created = db.contentStyles.create({
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      workflowCode: 'maoxiaoxian.daily_topics',
+      name: '温柔治愈型',
+      description: '用生活化语言生成温柔、有情绪价值的微博。',
+      reviewPolicyJson: { mode: 'sample', sampleRate: 0.5 },
+      dispatchPolicyJson: { inheritAccountPolicy: true },
+    });
+    const updated = db.contentStyles.update(created.id, {
+      name: '温柔治愈型 v2',
+      reviewPolicyJson: { mode: 'auto', autoApproveBelowRiskScore: 20 },
+    });
+    const listed = db.contentStyles.listForAccount(account.id, 'maoxiaoxian');
+
+    expect(created).toMatchObject({
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      name: '温柔治愈型',
+    });
+    expect(updated).toMatchObject({
+      id: created.id,
+      name: '温柔治愈型 v2',
+      reviewPolicyJson: { mode: 'auto', autoApproveBelowRiskScore: 20 },
+    });
+    expect(listed).toContainEqual(expect.objectContaining({
+      id: created.id,
+      name: '温柔治愈型 v2',
+    }));
+  });
+
+  test('copies one content style to multiple target accounts and skips source account', async () => {
+    const db = await createDatabase(':memory:');
+    const sourceAccount = db.accounts.create({
+      name: 'source account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+      activePluginCode: 'maoxiaoxian',
+    });
+    const targetA = db.accounts.create({
+      name: 'target a',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9223,
+      status: 'active',
+      notes: '',
+      activePluginCode: 'maoxiaoxian',
+    });
+    const targetB = db.accounts.create({
+      name: 'target b',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9224,
+      status: 'active',
+      notes: '',
+      activePluginCode: 'maoxiaoxian',
+    });
+    const sourceStyle = db.contentStyles.create({
+      accountId: sourceAccount.id,
+      pluginCode: 'maoxiaoxian',
+      workflowCode: 'maoxiaoxian.daily_topics',
+      name: '矩阵热点锐评',
+      description: '适合矩阵账号复用的热点评论风格。',
+      modelPolicyJson: { provider: 'dashscope', model: 'qwen-plus' },
+      reviewPolicyJson: { mode: 'manual' },
+      dispatchPolicyJson: { dailyLimit: 2 },
+      dedupePolicyJson: { topicWindowHours: 48 },
+    });
+
+    const copied = db.contentStyles.copyToAccounts(sourceStyle.id, [sourceAccount.id, targetA.id, targetB.id], '批量复用');
+
+    expect(copied).toHaveLength(2);
+    expect(copied.map((style) => style.accountId).sort()).toEqual([targetA.id, targetB.id].sort());
+    expect(copied).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        pluginCode: sourceStyle.pluginCode,
+        workflowCode: sourceStyle.workflowCode,
+        name: '矩阵热点锐评 批量复用',
+        modelPolicyJson: sourceStyle.modelPolicyJson,
+        reviewPolicyJson: sourceStyle.reviewPolicyJson,
+        dispatchPolicyJson: sourceStyle.dispatchPolicyJson,
+        dedupePolicyJson: sourceStyle.dedupePolicyJson,
+      }),
+    ]));
+    expect(db.contentStyles.listForAccount(sourceAccount.id, 'maoxiaoxian').filter((style) => style.name === '矩阵热点锐评 批量复用')).toHaveLength(0);
+  });
+
+  test('persists workflow generated content with account, style, and run trace', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'maoxiaoxian persisted account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+      activePluginCode: 'maoxiaoxian',
+    });
+    const style = db.contentStyles.listForAccount(account.id, 'maoxiaoxian')[0];
+    const tool = new PersistTool(db);
+    const context: WorkflowContext = {
+      runId: 'run_persist_001',
+      workflowId: 'maoxiaoxian.noop_test',
+      accountId: account.id,
+      state: {
+        final_post: 'This generated post should keep trace fields.',
+        topic: 'traceable topic',
+        styleId: style.id,
+        pluginCode: 'maoxiaoxian',
+        reviewMode: 'manual',
+        sourceJson: { workflowCode: 'maoxiaoxian.noop_test' },
+        riskJson: { score: 42, flags: ['needs_review'] },
+      },
+      logs: [],
+      config: {},
+    };
+
+    await tool.execute(
+      { id: 'persist_final', type: 'persist', dataKey: 'final_post', table: 'content_items' },
+      context,
+    );
+
+    const [content] = db.contentItems.list();
+    const pendingReviews = db.reviewItems.listPending();
+
+    expect(content).toMatchObject({
+      body: 'This generated post should keep trace fields.',
+      source: 'ai',
+      status: 'reviewing',
+      tenantId: style.tenantId,
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: style.id,
+      runId: 'run_persist_001',
+      topicsJson: ['traceable topic'],
+      sourceJson: { workflowCode: 'maoxiaoxian.noop_test' },
+      riskJson: { score: 42, flags: ['needs_review'] },
+    });
+    expect(pendingReviews).toContainEqual(expect.objectContaining({
+      contentId: content.id,
+      reviewMode: 'manual',
+      status: 'pending',
+      comment: 'Created by workflow persist step',
+    }));
+    expect(context.state.persistedContentId).toBe(content.id);
+  });
+
+  test('auto review policy approves low risk content without review item', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'maoxiaoxian auto account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+      activePluginCode: 'maoxiaoxian',
+    });
+    const style = db.contentStyles.findById('mx_healing_emotion');
+    if (!style) {
+      throw new Error('Expected mx_healing_emotion style');
+    }
+    const tool = new PersistTool(db);
+    const context: WorkflowContext = {
+      runId: 'run_auto_low_risk',
+      workflowId: style.workflowCode,
+      accountId: account.id,
+      state: {
+        final_post: 'Low risk healing content can be approved by policy.',
+        topic: 'healing topic',
+        styleId: style.id,
+        pluginCode: style.pluginCode,
+        reviewMode: 'auto',
+        riskJson: { score: 10, flags: [] },
+      },
+      logs: [],
+      config: {},
+    };
+
+    await tool.execute(
+      { id: 'persist_final', type: 'persist', dataKey: 'final_post', table: 'content_items' },
+      context,
+    );
+
+    const [content] = db.contentItems.list();
+
+    expect(content).toMatchObject({
+      status: 'approved',
+      styleId: 'mx_healing_emotion',
+      riskJson: { score: 10, flags: [] },
+    });
+    expect(db.reviewItems.listPending()).toHaveLength(0);
+    expect(db.distributionTasks.list()).toContainEqual(expect.objectContaining({
+      contentId: content.id,
+      accountId: account.id,
+      platform: 'weibo',
+      status: 'queued',
+    }));
+  });
+
+  test('auto review policy escalates high risk content into review pool', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'maoxiaoxian risk account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+      activePluginCode: 'maoxiaoxian',
+    });
+    const style = db.contentStyles.findById('mx_healing_emotion');
+    if (!style) {
+      throw new Error('Expected mx_healing_emotion style');
+    }
+    const tool = new PersistTool(db);
+    const context: WorkflowContext = {
+      runId: 'run_auto_high_risk',
+      workflowId: style.workflowCode,
+      accountId: account.id,
+      state: {
+        final_post: 'High risk content should not bypass review.',
+        topic: 'risk topic',
+        styleId: style.id,
+        pluginCode: style.pluginCode,
+        reviewMode: 'auto',
+        riskJson: { score: 80, flags: ['sensitive_claim'] },
+      },
+      logs: [],
+      config: {},
+    };
+
+    await tool.execute(
+      { id: 'persist_final', type: 'persist', dataKey: 'final_post', table: 'content_items' },
+      context,
+    );
+
+    const [content] = db.contentItems.list();
+
+    expect(content.status).toBe('reviewing');
+    expect(db.reviewItems.listPending()).toContainEqual(expect.objectContaining({
+      contentId: content.id,
+      reviewMode: 'manual',
+      status: 'pending',
+      comment: expect.stringContaining('risk'),
+    }));
+    expect(db.distributionTasks.list()).toHaveLength(0);
+  });
+
+  test('approved review item creates one dispatch task for the linked content', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'review dispatch account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+      activePluginCode: 'maoxiaoxian',
+    });
+    const content = db.contentItems.create({
+      title: 'Reviewed AI content',
+      body: 'Approved content should move into dispatch once.',
+      source: 'ai',
+      status: 'reviewing',
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: 'mx_hot_bazi',
+      topicsJson: ['dispatch'],
+      mediaJson: [{ path: 'D:/media/a.png' }],
+    });
+    const review = db.reviewItems.create({
+      contentId: content.id,
+      reviewMode: 'manual',
+      status: 'pending',
+      comment: 'needs check',
+    });
+
+    db.reviewItems.approve(review.id, 'operator_001', 'ok');
+    db.reviewItems.approve(review.id, 'operator_001', 'ok again');
+
+    expect(db.distributionTasks.list()).toEqual([
+      expect.objectContaining({
+        contentId: content.id,
+        accountId: account.id,
+        platform: 'weibo',
+        status: 'queued',
+        platformPayload: expect.objectContaining({
+          content: content.body,
+          source: 'review_approved',
+        }),
+      }),
+    ]);
+  });
+
+  test('sample review policy is deterministic from run seed', () => {
+    expect(decideReviewPolicy({
+      requestedMode: 'sample',
+      stylePolicy: { mode: 'sample', sampleRate: 1 },
+      riskScore: 0,
+      seed: 'always-sample',
+    })).toMatchObject({
+      contentStatus: 'reviewing',
+      createReview: true,
+      reviewMode: 'sample',
+    });
+
+    expect(decideReviewPolicy({
+      requestedMode: 'sample',
+      stylePolicy: { mode: 'sample', sampleRate: 0 },
+      riskScore: 0,
+      seed: 'never-sample',
+    })).toMatchObject({
+      contentStatus: 'approved',
+      createReview: false,
+      reviewMode: 'sample',
+    });
+  });
+
+  test('approved content created from the UI enters the dispatch pool automatically', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'auto dispatch account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+      activePluginCode: 'maoxiaoxian',
+    });
+
+    const content = db.contentItems.create({
+      title: 'Auto approved content',
+      body: 'Auto approved body',
+      source: 'ai',
+      status: 'approved',
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: 'mx_healing_emotion',
+      runId: 'ui_run_1',
+    });
+
+    expect(db.distributionTasks.list()).toContainEqual(expect.objectContaining({
+      contentId: content.id,
+      accountId: account.id,
+      platform: 'weibo',
+      status: 'queued',
+    }));
+  });
+
   test('updates, retries, and cancels distribution tasks', async () => {
     const db = await createDatabase(':memory:');
     const account = db.accounts.create({
@@ -131,6 +611,396 @@ describe('database repositories', () => {
     expect(retried.status).toBe('queued');
     expect(cancelled.status).toBe('failed');
     expect(cancelled.lastError).toBe('Cancelled by operator');
+  });
+
+  test('rejects conflicting queued distribution tasks for the same account and time', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'conflict account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+    });
+    const firstContent = db.contentItems.create({
+      title: 'First conflict content',
+      body: 'First body',
+      source: 'manual',
+      status: 'ready',
+    });
+    const secondContent = db.contentItems.create({
+      title: 'Second conflict content',
+      body: 'Second body',
+      source: 'manual',
+      status: 'ready',
+    });
+
+    db.distributionTasks.create({
+      contentId: firstContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'First body' },
+    });
+
+    expect(() => db.distributionTasks.create({
+      contentId: secondContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'Second body' },
+    })).toThrow('SCHEDULE_CONFLICT');
+  });
+
+  test('rejects updates that move queued distribution tasks onto a same-account conflict', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'update conflict account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+    });
+    const firstContent = db.contentItems.create({
+      title: 'First update conflict',
+      body: 'First body',
+      source: 'manual',
+      status: 'ready',
+    });
+    const secondContent = db.contentItems.create({
+      title: 'Second update conflict',
+      body: 'Second body',
+      source: 'manual',
+      status: 'ready',
+    });
+    db.distributionTasks.create({
+      contentId: firstContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'First body' },
+    });
+    const secondTask = db.distributionTasks.create({
+      contentId: secondContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T11:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'Second body' },
+    });
+
+    expect(() => db.distributionTasks.update(secondTask.id, {
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'Second body updated' },
+    })).toThrow('SCHEDULE_CONFLICT');
+  });
+
+  test('rejects queued distribution tasks inside the same account minimum interval', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'interval account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+      aiConfigJson: {
+        dispatchPolicy: {
+          minIntervalMinutes: 30,
+        },
+      },
+    });
+    const firstContent = db.contentItems.create({
+      title: 'First interval content',
+      body: 'First body',
+      source: 'manual',
+      status: 'ready',
+    });
+    const secondContent = db.contentItems.create({
+      title: 'Second interval content',
+      body: 'Second body',
+      source: 'manual',
+      status: 'ready',
+    });
+    db.distributionTasks.create({
+      contentId: firstContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'First body' },
+    });
+
+    expect(() => db.distributionTasks.create({
+      contentId: secondContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T10:20:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'Second body' },
+    })).toThrow('SCHEDULE_INTERVAL_CONFLICT');
+  });
+
+  test('rejects queued distribution tasks beyond the same account daily limit', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'daily limit account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+      aiConfigJson: {
+        dispatchPolicy: {
+          dailyLimit: 1,
+        },
+      },
+    });
+    const firstContent = db.contentItems.create({
+      title: 'First daily content',
+      body: 'First body',
+      source: 'manual',
+      status: 'ready',
+    });
+    const secondContent = db.contentItems.create({
+      title: 'Second daily content',
+      body: 'Second body',
+      source: 'manual',
+      status: 'ready',
+    });
+    db.distributionTasks.create({
+      contentId: firstContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'First body' },
+    });
+
+    expect(() => db.distributionTasks.create({
+      contentId: secondContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T18:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'Second body' },
+    })).toThrow('SCHEDULE_DAILY_LIMIT');
+  });
+
+  test('rejects consecutive queued tasks for the same style when style policy limits repetition', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'style repetition account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+      activePluginCode: 'maoxiaoxian',
+    });
+    const limitedStyle = db.contentStyles.create({
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      workflowCode: 'maoxiaoxian.daily_topics',
+      name: '限连风格',
+      description: '同账号不允许连续排两条。',
+      dispatchPolicyJson: { maxConsecutivePerAccount: 1 },
+    });
+    const otherStyle = db.contentStyles.create({
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      workflowCode: 'maoxiaoxian.daily_topics',
+      name: '穿插风格',
+      description: '用于打断连续风格。',
+    });
+    const firstContent = db.contentItems.create({
+      title: 'first limited',
+      body: 'first limited body',
+      source: 'ai',
+      status: 'ready',
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: limitedStyle.id,
+    });
+    const secondContent = db.contentItems.create({
+      title: 'second limited',
+      body: 'second limited body',
+      source: 'ai',
+      status: 'ready',
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: limitedStyle.id,
+    });
+    const otherContent = db.contentItems.create({
+      title: 'other style',
+      body: 'other style body',
+      source: 'ai',
+      status: 'ready',
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: otherStyle.id,
+    });
+
+    db.distributionTasks.create({
+      contentId: firstContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T09:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: firstContent.body },
+    });
+
+    expect(() => db.distributionTasks.create({
+      contentId: secondContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: secondContent.body },
+    })).toThrow('SCHEDULE_STYLE_CONSECUTIVE_LIMIT');
+
+    db.distributionTasks.create({
+      contentId: otherContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: otherContent.body },
+    });
+
+    expect(db.distributionTasks.create({
+      contentId: secondContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T11:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: secondContent.body },
+    })).toMatchObject({
+      contentId: secondContent.id,
+      accountId: account.id,
+      status: 'queued',
+    });
+  });
+
+  test('scheduler processes due distribution tasks and records manual action failures', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'paused publish account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'paused',
+      notes: '',
+    });
+    const content = db.contentItems.create({
+      title: 'Due AI task',
+      body: 'This due task should be handled by the scheduler.',
+      source: 'ai',
+      status: 'approved',
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: 'mx_healing_emotion',
+    });
+    const task = db.distributionTasks.create({
+      contentId: content.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-01-01T00:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: content.body, source: 'test' },
+    });
+    const scheduler = new PublishScheduler(db);
+
+    const status = await scheduler.runOnce('2026-01-01T00:00:01.000Z');
+
+    expect(status.lastMessage).toContain('Processed 1 due distribution task');
+    expect(db.distributionTasks.list()).toContainEqual(expect.objectContaining({
+      id: task.id,
+      status: 'needs_manual_action',
+      lastError: 'Account is not active',
+    }));
+    expect(db.publishRuns.listByTask(task.id)).toContainEqual(expect.objectContaining({
+      taskId: task.id,
+      accountId: account.id,
+      platform: 'weibo',
+      status: 'needs_manual_action',
+      message: 'Account is not active',
+    }));
+  });
+
+  test('scheduler adapts AI distribution tasks into one legacy post before publishing', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'active manual account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+    });
+    const content = db.contentItems.create({
+      title: 'AI content ready for publish',
+      body: 'AI generated body should become a publish draft.',
+      source: 'ai',
+      status: 'approved',
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: 'mx_healing_emotion',
+      mediaJson: [{ path: 'D:/media/ai.png' }],
+    });
+    const task = db.distributionTasks.create({
+      contentId: content.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-01-01T00:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: content.body, mediaPaths: ['D:/media/ai.png'], source: 'test' },
+    });
+    const scheduler = new PublishScheduler(db);
+
+    await scheduler.runOnce('2026-01-01T00:00:01.000Z');
+
+    const [updatedTask] = db.distributionTasks.list();
+    const [post] = db.posts.list();
+
+    expect(db.distributionTasks.list()).toHaveLength(1);
+    expect(updatedTask).toMatchObject({
+      id: task.id,
+      legacyPostId: post.id,
+      status: 'failed',
+      lastError: 'Publish now currently supports AdsPower accounts only',
+    });
+    expect(post).toMatchObject({
+      accountId: account.id,
+      content: content.body,
+      mediaPaths: ['D:/media/ai.png'],
+      status: 'queued',
+    });
+    expect(db.publishRuns.listByTask(task.id)).toContainEqual(expect.objectContaining({
+      taskId: task.id,
+      status: 'failed',
+      message: 'Publish now currently supports AdsPower accounts only',
+    }));
   });
 
   test('updates task account and content while keeping legacy posts in sync', async () => {

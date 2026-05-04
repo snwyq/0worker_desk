@@ -10,18 +10,23 @@ import type {
   AiWorkflowRunStatus,
   AppSetting,
   ContentItem,
+  ContentStyle,
   ContentVersion,
   CreateAccountInput,
   CreateContentItemInput,
+  CreateContentStyleInput,
   CreateDistributionTaskInput,
   CreatePostInput,
   CreatePublishRunInput,
+  CreateReviewItemInput,
   DistributionTask,
   Platform,
   Post,
   PublishRun,
+  ReviewItem,
   UpdateAccountInput,
   UpdateContentItemInput,
+  UpdateContentStyleInput,
   UpdateDistributionTaskInput,
 } from '../../shared/types.js';
 
@@ -32,6 +37,11 @@ function now() {
 function parseJsonObject(value: unknown): Record<string, unknown> {
   const parsed = JSON.parse(String(value || '{}')) as unknown;
   return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+}
+
+function parseJsonArray<T = unknown>(value: unknown): T[] {
+  const parsed = JSON.parse(String(value || '[]')) as unknown;
+  return Array.isArray(parsed) ? parsed as T[] : [];
 }
 
 function mapAccount(row: Record<string, unknown>): Account {
@@ -90,6 +100,49 @@ function mapContentItem(row: Record<string, unknown>): ContentItem {
     body: String(row.body),
     source: row.source as ContentItem['source'],
     status: row.status as ContentItem['status'],
+    tenantId: String(row.tenantId ?? ''),
+    accountId: row.accountId === null || row.accountId === undefined ? null : Number(row.accountId),
+    pluginCode: String(row.pluginCode ?? ''),
+    styleId: String(row.styleId ?? ''),
+    runId: String(row.runId ?? ''),
+    topicsJson: parseJsonArray<string>(row.topicsJson),
+    mediaJson: parseJsonArray<Record<string, unknown>>(row.mediaJson),
+    sourceJson: parseJsonObject(row.sourceJson),
+    riskJson: parseJsonObject(row.riskJson),
+    createdAt: String(row.createdAt),
+    updatedAt: String(row.updatedAt),
+  };
+}
+
+function mapContentStyle(row: Record<string, unknown>): ContentStyle {
+  return {
+    id: String(row.id),
+    tenantId: String(row.tenantId ?? ''),
+    accountId: row.accountId === null || row.accountId === undefined ? null : Number(row.accountId),
+    pluginCode: String(row.pluginCode),
+    workflowCode: String(row.workflowCode),
+    name: String(row.name),
+    description: String(row.description ?? ''),
+    promptTemplateId: String(row.promptTemplateId ?? ''),
+    modelPolicyJson: parseJsonObject(row.modelPolicyJson),
+    reviewPolicyJson: parseJsonObject(row.reviewPolicyJson),
+    dispatchPolicyJson: parseJsonObject(row.dispatchPolicyJson),
+    dedupePolicyJson: parseJsonObject(row.dedupePolicyJson),
+    status: row.status as ContentStyle['status'],
+    createdAt: String(row.createdAt),
+    updatedAt: String(row.updatedAt),
+  };
+}
+
+function mapReviewItem(row: Record<string, unknown>): ReviewItem {
+  return {
+    id: Number(row.id),
+    contentId: Number(row.contentId),
+    reviewMode: row.reviewMode as ReviewItem['reviewMode'],
+    status: row.status as ReviewItem['status'],
+    reviewerId: String(row.reviewerId ?? ''),
+    comment: String(row.comment ?? ''),
+    approvedAt: String(row.approvedAt ?? ''),
     createdAt: String(row.createdAt),
     updatedAt: String(row.updatedAt),
   };
@@ -135,6 +188,17 @@ function mapPublishRun(row: Record<string, unknown>): PublishRun {
     screenshotPath: String(row.screenshotPath),
     createdAt: String(row.createdAt),
   };
+}
+
+function readMediaPathsFromTask(content: ContentItem, task: DistributionTask): string[] {
+  const payloadMedia = task.platformPayload.mediaPaths;
+  if (Array.isArray(payloadMedia)) {
+    return payloadMedia.map((item) => String(item)).filter(Boolean);
+  }
+
+  return content.mediaJson
+    .map((item) => item.path ?? item.url ?? item.filePath)
+    .filter((item): item is string => typeof item === 'string' && item.length > 0);
 }
 
 function mapAiPlugin(row: Record<string, unknown>): AiPlugin {
@@ -183,6 +247,197 @@ function firstRow(row: unknown): Record<string, unknown> {
   return row as Record<string, unknown>;
 }
 
+const maoxiaoxianWorkflowDefinition = {
+  trigger: 'auto',
+  frequency: '1/day',
+  steps: [
+    { id: 'step1', type: 'bazi_calc', birthDateKey: 'userBirth', outputKey: 'baziResult' },
+    { id: 'step2', type: 'tophub_search', nodeId: 'KqndgxeLl9', outputKey: 'hotTopics' },
+    { id: 'step3', type: 'llm', prompt: '结合命理结果 {{state.baziResult.summary}} 和今日热点 {{state.hotTopics[0]}}，写一篇治愈系微博文案。', inputKey: 'none', outputKey: 'finalContent' },
+    { id: 'step4', type: 'image_gen', prompt: '一张充满意境的禅意背景图，适合微博配图', model: 'dall-e-3', outputKey: 'coverImage' },
+  ],
+};
+
+function createMaoxiaoxianStyleWorkflow(styleId: string, prompt: string) {
+  return {
+    trigger: 'manual',
+    frequency: 'manual',
+    steps: [
+      { id: 'fetch_hot_topics', type: 'tophub_search', nodeId: '3QeLwJEd7k', outputKey: 'hotTopics' },
+      {
+        id: 'generate_post',
+        type: 'llm',
+        prompt,
+        inputKey: 'hotTopics',
+        outputKey: 'final_post',
+      },
+      { id: 'persist_post', type: 'persist', dataKey: 'final_post', table: 'content_items' },
+    ],
+    settingsSchema: {
+      topic: { type: 'string' },
+      targetPersona: { type: 'string' },
+      requirement: { type: 'string' },
+      styleId: { type: 'string', default: styleId },
+      reviewMode: { type: 'string', default: 'manual' },
+    },
+  };
+}
+
+const maoxiaoxianStyleWorkflows = [
+  {
+    code: 'maoxiaoxian.daily_hot_person',
+    name: '热点人物命理解读',
+    definition: createMaoxiaoxianStyleWorkflow(
+      'mx_hot_bazi',
+      '你是微博命理内容创作者。围绕选题 {{topic}} 和热点 {{state.hotTopics}}，写一条热点人物命理解读微博。要求：{{requirement}}。面向人群：{{targetPersona}}。避免绝对化断言，保留人工核验空间。',
+    ),
+  },
+  {
+    code: 'maoxiaoxian.manual_or_batch_topic',
+    name: '治愈系情绪价值',
+    definition: createMaoxiaoxianStyleWorkflow(
+      'mx_healing_emotion',
+      '你是治愈系微博博主。围绕选题 {{topic}}，结合热点 {{state.hotTopics}}，写一条温柔、轻盈、有情绪价值的微博。要求：{{requirement}}。面向人群：{{targetPersona}}。',
+    ),
+  },
+  {
+    code: 'maoxiaoxian.hot_commentary',
+    name: '犀利热点点评',
+    definition: createMaoxiaoxianStyleWorkflow(
+      'mx_sharp_commentary',
+      '你是观点型微博博主。围绕选题 {{topic}} 和热点 {{state.hotTopics}}，写一条有锋芒但不过度攻击的热点点评微博。要求：{{requirement}}。面向人群：{{targetPersona}}。',
+    ),
+  },
+  {
+    code: 'maoxiaoxian.batch_guoxue',
+    name: '国学/面相泛内容',
+    definition: createMaoxiaoxianStyleWorkflow(
+      'mx_guoxue_daily',
+      '你是国学泛内容微博博主。围绕选题 {{topic}}，结合热点 {{state.hotTopics}}，写一条适合日常发布的国学/面相泛内容微博。要求：{{requirement}}。面向人群：{{targetPersona}}。',
+    ),
+  },
+];
+
+function seedMaoxiaoxianPlugin(sqlite: Database.Database, timestamp: string) {
+  sqlite.prepare(`
+    INSERT INTO ai_plugins (code, name, description, configJson, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(code) DO UPDATE SET
+      name = excluded.name,
+      description = excluded.description,
+      configJson = excluded.configJson,
+      updatedAt = excluded.updatedAt
+  `).run(
+    'maoxiaoxian',
+    '猫小仙内容矩阵',
+    '基于命理算法与实时热点的内容创作引擎',
+    '{}',
+    timestamp,
+    timestamp,
+  );
+
+  sqlite.prepare(`
+    INSERT INTO ai_workflows (pluginCode, code, name, definitionJson, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(pluginCode, code) DO UPDATE SET
+      name = excluded.name,
+      definitionJson = excluded.definitionJson,
+      updatedAt = excluded.updatedAt
+  `).run(
+    'maoxiaoxian',
+    'maoxiaoxian.daily_topics',
+    '每日治愈系话题生成',
+    JSON.stringify(maoxiaoxianWorkflowDefinition),
+    timestamp,
+    timestamp,
+  );
+
+  const upsertWorkflow = sqlite.prepare(`
+    INSERT INTO ai_workflows (pluginCode, code, name, definitionJson, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(pluginCode, code) DO UPDATE SET
+      name = excluded.name,
+      definitionJson = excluded.definitionJson,
+      updatedAt = excluded.updatedAt
+  `);
+
+  for (const workflow of maoxiaoxianStyleWorkflows) {
+    upsertWorkflow.run(
+      'maoxiaoxian',
+      workflow.code,
+      workflow.name,
+      JSON.stringify(workflow.definition),
+      timestamp,
+      timestamp,
+    );
+  }
+}
+
+function seedDefaultContentStyles(sqlite: Database.Database, timestamp: string) {
+  const styles = [
+    {
+      id: 'mx_hot_bazi',
+      name: '热点人物命理解读',
+      workflowCode: 'maoxiaoxian.daily_hot_person',
+      reviewPolicyJson: { mode: 'manual' },
+      dispatchPolicyJson: { dailyLimit: 3, minIntervalMinutes: 90 },
+    },
+    {
+      id: 'mx_healing_emotion',
+      name: '治愈系情绪价值',
+      workflowCode: 'maoxiaoxian.manual_or_batch_topic',
+      reviewPolicyJson: { mode: 'auto', autoApproveWhenRiskBelow: 20 },
+      dispatchPolicyJson: { dailyLimit: 6, minIntervalMinutes: 45 },
+    },
+    {
+      id: 'mx_sharp_commentary',
+      name: '犀利热点点评',
+      workflowCode: 'maoxiaoxian.hot_commentary',
+      reviewPolicyJson: { mode: 'manual' },
+      dispatchPolicyJson: { dailyLimit: 2, minIntervalMinutes: 120 },
+    },
+    {
+      id: 'mx_guoxue_daily',
+      name: '国学/面相泛内容',
+      workflowCode: 'maoxiaoxian.batch_guoxue',
+      reviewPolicyJson: { mode: 'sample', sampleRate: 0.3 },
+      dispatchPolicyJson: { dailyLimit: 8, minIntervalMinutes: 40 },
+    },
+  ];
+
+  const upsert = sqlite.prepare(`
+    INSERT INTO content_styles (
+      id, tenantId, accountId, pluginCode, workflowCode, name, description, promptTemplateId,
+      modelPolicyJson, reviewPolicyJson, dispatchPolicyJson, dedupePolicyJson, status, createdAt, updatedAt
+    )
+    VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      workflowCode = excluded.workflowCode,
+      name = excluded.name,
+      reviewPolicyJson = excluded.reviewPolicyJson,
+      dispatchPolicyJson = excluded.dispatchPolicyJson,
+      updatedAt = excluded.updatedAt
+  `);
+
+  for (const style of styles) {
+    upsert.run(
+      style.id,
+      'tenant_default',
+      'maoxiaoxian',
+      style.workflowCode,
+      style.name,
+      '',
+      `${style.id}.prompt`,
+      '{}',
+      JSON.stringify(style.reviewPolicyJson),
+      JSON.stringify(style.dispatchPolicyJson),
+      '{}',
+      timestamp,
+      timestamp,
+    );
+  }
+}
+
 export async function createDatabase(filename: string) {
   if (filename !== ':memory:') {
     fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -216,24 +471,7 @@ export async function createDatabase(filename: string) {
   // 🔴 紧急硬编码注入：确保猫小仙数据在任何查询前存在
   try {
     const nowTs = new Date().toISOString();
-    sqlite.prepare('INSERT OR IGNORE INTO ai_plugins (code, name, description, configJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)').run(
-      'maoxiaoxian', '猫小仙内容矩阵', '基于命理算法与实时热点的内容创作引擎', '{}', nowTs, nowTs
-    );
-    
-    const wfDef = JSON.stringify({
-      trigger: 'auto',
-      frequency: '1/day',
-      steps: [
-        { id: 'step1', type: 'bazi_calc', birthDateKey: 'userBirth', outputKey: 'baziResult' },
-        { id: 'step2', type: 'tophub_search', nodeId: 'KqndgxeLl9', outputKey: 'hotTopics' },
-        { id: 'step3', type: 'llm', prompt: '结合命理结果 {{state.baziResult.summary}} 和今日热点 {{state.hotTopics[0]}}，写一篇治愈系微博文案。', inputKey: 'none', outputKey: 'finalContent' },
-        { id: 'step4', type: 'image_gen', prompt: '一张充满意境的禅意背景图，适合微博配图', model: 'dall-e-3', outputKey: 'coverImage' }
-      ]
-    });
-
-    sqlite.prepare('INSERT OR IGNORE INTO ai_workflows (pluginCode, code, name, definitionJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)').run(
-      'maoxiaoxian', 'maoxiaoxian.daily_topics', '每日治愈系话题生成', wfDef, nowTs, nowTs
-    );
+    seedMaoxiaoxianPlugin(sqlite, nowTs);
   } catch (e) {
     console.error('Seed error:', e);
   }
@@ -298,69 +536,11 @@ export async function createDatabase(filename: string) {
   });
 
   applyMigration('002_seed_maoxiaoxian_plugin', () => {
-    // 注入猫小仙插件
-    const timestamp = now();
-    sqlite.prepare('INSERT INTO ai_plugins (code, name, description, configJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)').run(
-      'maoxiaoxian',
-      '猫小仙内容矩阵',
-      '基于命理算法与实时热点的内容创作引擎',
-      '{}',
-      timestamp,
-      timestamp
-    );
-
-    // 注入每日话题生成工作流
-    const workflowDef = {
-      trigger: 'auto',
-      frequency: '1/day',
-      steps: [
-        { id: 'step1', type: 'bazi_calc', birthDateKey: 'userBirth', outputKey: 'baziResult' },
-        { id: 'step2', type: 'tophub_search', nodeId: 'KqndgxeLl9', outputKey: 'hotTopics' },
-        { id: 'step3', type: 'llm', prompt: '结合命理结果 {{state.baziResult.summary}} 和今日热点 {{state.hotTopics[0]}}，写一篇治愈系微博文案。', inputKey: 'none', outputKey: 'finalContent' },
-        { id: 'step4', type: 'image_gen', prompt: '一张充满意境的禅意背景图，适合微博配图', model: 'dall-e-3', outputKey: 'coverImage' }
-      ]
-    };
-
-    sqlite.prepare('INSERT INTO ai_workflows (pluginCode, code, name, definitionJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)').run(
-      'maoxiaoxian',
-      'maoxiaoxian.daily_topics',
-      '每日治愈系话题生成',
-      JSON.stringify(workflowDef),
-      timestamp,
-      timestamp
-    );
+    seedMaoxiaoxianPlugin(sqlite, now());
   });
 
   applyMigration('003_seed_maoxiaoxian_v2', () => {
-    const timestamp = now();
-    sqlite.prepare('INSERT OR REPLACE INTO ai_plugins (code, name, description, configJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)').run(
-      'maoxiaoxian',
-      '猫小仙内容矩阵',
-      '基于命理算法与实时热点的内容创作引擎',
-      '{}',
-      timestamp,
-      timestamp
-    );
-
-    const workflowDef = {
-      trigger: 'auto',
-      frequency: '1/day',
-      steps: [
-        { id: 'step1', type: 'bazi_calc', birthDateKey: 'userBirth', outputKey: 'baziResult' },
-        { id: 'step2', type: 'tophub_search', nodeId: 'KqndgxeLl9', outputKey: 'hotTopics' },
-        { id: 'step3', type: 'llm', prompt: '结合命理结果 {{state.baziResult.summary}} 和今日热点 {{state.hotTopics[0]}}，写一篇治愈系微博文案。', inputKey: 'none', outputKey: 'finalContent' },
-        { id: 'step4', type: 'image_gen', prompt: '一张充满意境的禅意背景图，适合微博配图', model: 'dall-e-3', outputKey: 'coverImage' }
-      ]
-    };
-
-    sqlite.prepare('INSERT OR REPLACE INTO ai_workflows (pluginCode, code, name, definitionJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)').run(
-      'maoxiaoxian',
-      'maoxiaoxian.daily_topics',
-      '每日治愈系话题生成',
-      JSON.stringify(workflowDef),
-      timestamp,
-      timestamp
-    );
+    seedMaoxiaoxianPlugin(sqlite, now());
   });
 
   applyMigration('004_fix_workflow_runs_columns', () => {
@@ -381,33 +561,269 @@ export async function createDatabase(filename: string) {
     } catch (e) {}
   });
 
+  applyMigration('006_ai_review_pipeline_schema', () => {
+    const contentColumns = [
+      ['tenantId', "TEXT NOT NULL DEFAULT ''"],
+      ['accountId', 'INTEGER'],
+      ['pluginCode', "TEXT NOT NULL DEFAULT ''"],
+      ['styleId', "TEXT NOT NULL DEFAULT ''"],
+      ['runId', "TEXT NOT NULL DEFAULT ''"],
+      ['topicsJson', "TEXT NOT NULL DEFAULT '[]'"],
+      ['mediaJson', "TEXT NOT NULL DEFAULT '[]'"],
+      ['sourceJson', "TEXT NOT NULL DEFAULT '{}'"],
+      ['riskJson', "TEXT NOT NULL DEFAULT '{}'"],
+    ];
+    for (const [name, definition] of contentColumns) {
+      try {
+        sqlite.prepare(`ALTER TABLE content_items ADD COLUMN ${name} ${definition}`).run();
+      } catch (e) {}
+    }
+    seedDefaultContentStyles(sqlite, now());
+  });
+
   // ---------------------------------------------------------
   // 强力硬编码注入 (Brute Force Seed)
   // 确保无论迁移逻辑如何，数据在启动时必须存在
   // ---------------------------------------------------------
   const ts = now();
-  sqlite.prepare('INSERT OR REPLACE INTO ai_plugins (code, name, description, configJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)').run(
-    'maoxiaoxian', '猫小仙内容矩阵', '基于命理算法与实时热点的内容创作引擎', '{}', ts, ts
-  );
+  seedMaoxiaoxianPlugin(sqlite, ts);
+  seedDefaultContentStyles(sqlite, ts);
 
   // 强制补全 API Key 设置项
   upsertSetting('ai.dashscopeKey', process.env.DASH_SCOPE_API_KEY || 'sk-59063e5f9c6d4cdf9d7e1803fa18ae39', 'Aliyun DashScope API Key.');
   upsertSetting('ai.apiyiKey', process.env.API_YI_KEY || 'sk-w4r7SeqXczkv2ZBlFaC0Ab837fEa4a3c8266C33aF37dD1Ce', 'APIYi (Gemini/OpenAI) API Key.');
-  
-  const wfConfig = JSON.stringify({
-    trigger: 'auto',
-    frequency: '1/day',
-    steps: [
-      { id: 'step1', type: 'bazi_calc', birthDateKey: 'userBirth', outputKey: 'baziResult' },
-      { id: 'step2', type: 'tophub_search', nodeId: 'KqndgxeLl9', outputKey: 'hotTopics' },
-      { id: 'step3', type: 'llm', prompt: '结合命理结果 {{state.baziResult.summary}} 和今日热点 {{state.hotTopics[0]}}，写一篇治愈系微博文案。', inputKey: 'none', outputKey: 'finalContent' },
-      { id: 'step4', type: 'image_gen', prompt: '一张充满意境的禅意背景图，适合微博配图', model: 'dall-e-3', outputKey: 'coverImage' }
-    ]
-  });
 
-  sqlite.prepare('INSERT OR REPLACE INTO ai_workflows (pluginCode, code, name, definitionJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)').run(
-    'maoxiaoxian', 'maoxiaoxian.daily_topics', '每日治愈系话题生成', wfConfig, ts, ts
-  );
+  function getNumberPolicyValue(source: Record<string, unknown> | undefined, key: string): number | null {
+    const value = source?.[key];
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+
+  function resolveDispatchPolicyValue(accountId: number, contentId: number, key: string): number | null {
+    const contentRow = sqlite.prepare('SELECT * FROM content_items WHERE id = ?').get(contentId);
+    const content = contentRow ? mapContentItem(contentRow as Record<string, unknown>) : null;
+    if (content?.styleId) {
+      const styleRow = sqlite.prepare('SELECT * FROM content_styles WHERE id = ?').get(content.styleId);
+      if (styleRow) {
+        const style = mapContentStyle(styleRow as Record<string, unknown>);
+        const styleValue = getNumberPolicyValue(style.dispatchPolicyJson, key);
+        if (styleValue !== null) {
+          return styleValue;
+        }
+      }
+    }
+
+    const accountRow = sqlite.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId);
+    if (!accountRow) {
+      return null;
+    }
+    const account = mapAccount(accountRow as Record<string, unknown>);
+    const dispatchPolicy = account.aiConfigJson.dispatchPolicy;
+    return dispatchPolicy && typeof dispatchPolicy === 'object'
+      ? getNumberPolicyValue(dispatchPolicy as Record<string, unknown>, key)
+      : null;
+  }
+
+  function getContentStyleForContent(contentId: number): ContentStyle | null {
+    const contentRow = sqlite.prepare('SELECT * FROM content_items WHERE id = ?').get(contentId);
+    const content = contentRow ? mapContentItem(contentRow as Record<string, unknown>) : null;
+    if (!content?.styleId) {
+      return null;
+    }
+    const styleRow = sqlite.prepare('SELECT * FROM content_styles WHERE id = ?').get(content.styleId);
+    return styleRow ? mapContentStyle(styleRow as Record<string, unknown>) : null;
+  }
+
+  function assertStyleConsecutiveLimit(
+    contentId: number,
+    accountId: number,
+    scheduledAt: string,
+    status: DistributionTask['status'],
+    excludeTaskId: number | null = null,
+  ): void {
+    if (status !== 'queued' && status !== 'publishing') {
+      return;
+    }
+    const style = getContentStyleForContent(contentId);
+    if (!style?.id) {
+      return;
+    }
+    const maxConsecutive = getNumberPolicyValue(style.dispatchPolicyJson, 'maxConsecutivePerAccount');
+    if (!maxConsecutive || maxConsecutive <= 0) {
+      return;
+    }
+    const scheduledTime = new Date(scheduledAt).getTime();
+    if (!Number.isFinite(scheduledTime)) {
+      return;
+    }
+
+    const existingRows = select(`
+      SELECT dt.id, dt.scheduledAt, ci.styleId
+      FROM distribution_tasks dt
+      JOIN content_items ci ON ci.id = dt.contentId
+      WHERE dt.accountId = ?
+        AND dt.status IN ('queued', 'publishing')
+        AND (? IS NULL OR dt.id <> ?)
+      ORDER BY dt.scheduledAt ASC, dt.id ASC
+    `, [accountId, excludeTaskId, excludeTaskId]) as Array<{ id: number; scheduledAt: string; styleId: string }>;
+
+    const timeline = [
+      ...existingRows.map((row) => ({
+        id: row.id,
+        scheduledAt: row.scheduledAt,
+        styleId: row.styleId,
+        candidate: false,
+      })),
+      {
+        id: Number.MAX_SAFE_INTEGER,
+        scheduledAt,
+        styleId: style.id,
+        candidate: true,
+      },
+    ].sort((a, b) => {
+      const timeDiff = new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime();
+      return timeDiff || Number(a.candidate) - Number(b.candidate) || a.id - b.id;
+    });
+
+    const candidateIndex = timeline.findIndex((item) => item.candidate);
+    if (candidateIndex < 0) {
+      return;
+    }
+    let consecutiveCount = 1;
+    for (let index = candidateIndex - 1; index >= 0 && timeline[index].styleId === style.id; index -= 1) {
+      consecutiveCount += 1;
+    }
+    for (let index = candidateIndex + 1; index < timeline.length && timeline[index].styleId === style.id; index += 1) {
+      consecutiveCount += 1;
+    }
+    if (consecutiveCount > maxConsecutive) {
+      throw new Error('SCHEDULE_STYLE_CONSECUTIVE_LIMIT: account would exceed the configured consecutive style limit');
+    }
+  }
+
+  function assertNoScheduleConflict(
+    contentId: number,
+    accountId: number,
+    scheduledAt: string,
+    status: DistributionTask['status'],
+    excludeTaskId: number | null = null,
+  ): void {
+    if (status !== 'queued' && status !== 'publishing') {
+      return;
+    }
+
+    const row = sqlite.prepare(`
+      SELECT id FROM distribution_tasks
+      WHERE accountId = ?
+        AND scheduledAt = ?
+        AND status IN ('queued', 'publishing')
+        AND (? IS NULL OR id <> ?)
+      LIMIT 1
+    `).get(accountId, scheduledAt, excludeTaskId, excludeTaskId);
+
+    if (row) {
+      throw new Error('SCHEDULE_CONFLICT: account already has an active distribution task at this time');
+    }
+
+    assertStyleConsecutiveLimit(contentId, accountId, scheduledAt, status, excludeTaskId);
+
+    const minIntervalMinutes = resolveDispatchPolicyValue(accountId, contentId, 'minIntervalMinutes');
+    if (!minIntervalMinutes || minIntervalMinutes <= 0) {
+      // No interval policy configured for this account/style.
+    } else {
+      const scheduledTime = new Date(scheduledAt).getTime();
+      if (Number.isFinite(scheduledTime)) {
+        const lowerBound = new Date(scheduledTime - minIntervalMinutes * 60_000).toISOString();
+        const upperBound = new Date(scheduledTime + minIntervalMinutes * 60_000).toISOString();
+        const intervalRow = sqlite.prepare(`
+          SELECT id FROM distribution_tasks
+          WHERE accountId = ?
+            AND scheduledAt > ?
+            AND scheduledAt < ?
+            AND status IN ('queued', 'publishing')
+            AND (? IS NULL OR id <> ?)
+          LIMIT 1
+        `).get(accountId, lowerBound, upperBound, excludeTaskId, excludeTaskId);
+
+        if (intervalRow) {
+          throw new Error('SCHEDULE_INTERVAL_CONFLICT: account already has an active distribution task inside the minimum interval');
+        }
+      }
+    }
+
+    const dailyLimit = resolveDispatchPolicyValue(accountId, contentId, 'dailyLimit');
+    if (!dailyLimit || dailyLimit <= 0) {
+      return;
+    }
+    const scheduledDate = new Date(scheduledAt);
+    if (!Number.isFinite(scheduledDate.getTime())) {
+      return;
+    }
+    const dayStart = new Date(scheduledDate);
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+    const dailyRow = sqlite.prepare(`
+      SELECT COUNT(*) AS count FROM distribution_tasks
+      WHERE accountId = ?
+        AND scheduledAt >= ?
+        AND scheduledAt < ?
+        AND status IN ('queued', 'publishing', 'published')
+        AND (? IS NULL OR id <> ?)
+    `).get(accountId, dayStart.toISOString(), dayEnd.toISOString(), excludeTaskId, excludeTaskId) as { count?: number } | undefined;
+
+    if (Number(dailyRow?.count ?? 0) >= dailyLimit) {
+      throw new Error('SCHEDULE_DAILY_LIMIT: account has reached the configured daily distribution limit');
+    }
+  }
+
+  function enqueueContentForDispatch(contentId: number, source: string): DistributionTask | null {
+    const existing = sqlite.prepare('SELECT * FROM distribution_tasks WHERE contentId = ? ORDER BY id ASC LIMIT 1').get(contentId);
+    if (existing) {
+      return mapDistributionTask(existing as Record<string, unknown>);
+    }
+
+    const content = mapContentItem(firstRow(sqlite.prepare('SELECT * FROM content_items WHERE id = ?').get(contentId)));
+    if (!content.accountId) {
+      return null;
+    }
+
+    const account = mapAccount(firstRow(sqlite.prepare('SELECT * FROM accounts WHERE id = ?').get(content.accountId)));
+    const styleRow = content.styleId
+      ? sqlite.prepare('SELECT * FROM content_styles WHERE id = ?').get(content.styleId)
+      : null;
+    const style = styleRow ? mapContentStyle(styleRow as Record<string, unknown>) : null;
+    const minIntervalMinutes = typeof style?.dispatchPolicyJson.minIntervalMinutes === 'number'
+      ? style.dispatchPolicyJson.minIntervalMinutes
+      : 30;
+    const scheduled = new Date();
+    scheduled.setMinutes(scheduled.getMinutes() + minIntervalMinutes);
+    const timestamp = now();
+    const result = sqlite.prepare(`
+      INSERT INTO distribution_tasks (contentId, accountId, platform, legacyPostId, scheduledAt, status, platformPayload, createdAt, updatedAt)
+      VALUES (?, ?, ?, NULL, ?, 'queued', ?, ?, ?)
+    `).run(
+      content.id,
+      content.accountId,
+      account.platform,
+      scheduled.toISOString(),
+      JSON.stringify({
+        content: content.body,
+        mediaPaths: content.mediaJson,
+        topics: content.topicsJson,
+        source,
+        trace: {
+          tenantId: content.tenantId,
+          pluginCode: content.pluginCode,
+          styleId: content.styleId,
+          runId: content.runId,
+        },
+      }),
+      timestamp,
+      timestamp,
+    );
+
+    return mapDistributionTask(firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE id = ?').get(result.lastInsertRowid)));
+  }
 
   return {
     migrations: {
@@ -558,6 +974,7 @@ export async function createDatabase(filename: string) {
             INSERT INTO content_versions (contentId, title, body, source, createdAt)
             VALUES (?, ?, ?, 'manual', ?)
           `).run(contentResult.lastInsertRowid, input.content.slice(0, 48) || 'Untitled content', input.content, timestamp);
+          assertNoScheduleConflict(Number(contentResult.lastInsertRowid), input.accountId, input.scheduledAt, input.status);
           sqlite.prepare(`
             INSERT INTO distribution_tasks (contentId, accountId, platform, legacyPostId, scheduledAt, status, platformPayload, createdAt, updatedAt)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -608,14 +1025,156 @@ export async function createDatabase(filename: string) {
         return !this.findById(id);
       },
     },
+    contentStyles: {
+      listForAccount(accountId: number, pluginCode?: string): ContentStyle[] {
+        const params: unknown[] = [accountId];
+        const pluginFilter = pluginCode ? 'AND pluginCode = ?' : '';
+        if (pluginCode) {
+          params.push(pluginCode);
+        }
+        return select(`
+          SELECT * FROM content_styles
+          WHERE status = 'active'
+            AND (accountId = ? OR accountId IS NULL)
+            ${pluginFilter}
+          ORDER BY
+            CASE id
+              WHEN 'mx_hot_bazi' THEN 1
+              WHEN 'mx_healing_emotion' THEN 2
+              WHEN 'mx_sharp_commentary' THEN 3
+              WHEN 'mx_guoxue_daily' THEN 4
+              ELSE 99
+            END,
+            name ASC
+        `, params).map(mapContentStyle);
+      },
+      findById(id: string): ContentStyle | null {
+        const row = sqlite.prepare('SELECT * FROM content_styles WHERE id = ?').get(id);
+        return row ? mapContentStyle(row as Record<string, unknown>) : null;
+      },
+      create(input: CreateContentStyleInput): ContentStyle {
+        const timestamp = now();
+        const id = (input.id || `style_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`).trim();
+        sqlite.prepare(`
+          INSERT INTO content_styles (
+            id, tenantId, accountId, pluginCode, workflowCode, name, description, promptTemplateId,
+            modelPolicyJson, reviewPolicyJson, dispatchPolicyJson, dedupePolicyJson, status, createdAt, updatedAt
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          id,
+          input.tenantId ?? '',
+          input.accountId ?? null,
+          input.pluginCode,
+          input.workflowCode,
+          input.name,
+          input.description ?? '',
+          input.promptTemplateId ?? '',
+          JSON.stringify(input.modelPolicyJson ?? {}),
+          JSON.stringify(input.reviewPolicyJson ?? {}),
+          JSON.stringify(input.dispatchPolicyJson ?? {}),
+          JSON.stringify(input.dedupePolicyJson ?? {}),
+          input.status ?? 'active',
+          timestamp,
+          timestamp,
+        );
+        const created = this.findById(id);
+        if (!created) {
+          throw new Error('Content style was not created.');
+        }
+        return created;
+      },
+      update(id: string, input: UpdateContentStyleInput): ContentStyle {
+        const existing = this.findById(id);
+        if (!existing) {
+          throw new Error(`Content style ${id} not found.`);
+        }
+        sqlite.prepare(`
+          UPDATE content_styles
+          SET workflowCode = ?, name = ?, description = ?, promptTemplateId = ?,
+              modelPolicyJson = ?, reviewPolicyJson = ?, dispatchPolicyJson = ?, dedupePolicyJson = ?,
+              status = ?, updatedAt = ?
+          WHERE id = ?
+        `).run(
+          input.workflowCode ?? existing.workflowCode,
+          input.name ?? existing.name,
+          input.description ?? existing.description,
+          input.promptTemplateId ?? existing.promptTemplateId,
+          JSON.stringify(input.modelPolicyJson ?? existing.modelPolicyJson),
+          JSON.stringify(input.reviewPolicyJson ?? existing.reviewPolicyJson),
+          JSON.stringify(input.dispatchPolicyJson ?? existing.dispatchPolicyJson),
+          JSON.stringify(input.dedupePolicyJson ?? existing.dedupePolicyJson),
+          input.status ?? existing.status,
+          now(),
+          id,
+        );
+        const updated = this.findById(id);
+        if (!updated) {
+          throw new Error(`Content style ${id} not found after update.`);
+        }
+        return updated;
+      },
+      copyToAccounts(sourceStyleId: string, targetAccountIds: number[], nameSuffix = '副本'): ContentStyle[] {
+        const source = this.findById(sourceStyleId);
+        if (!source) {
+          throw new Error(`Content style ${sourceStyleId} not found.`);
+        }
+        const uniqueTargetIds = Array.from(new Set(targetAccountIds.filter((id) => Number.isFinite(id) && id > 0)));
+        const filteredTargetIds = uniqueTargetIds.filter((accountId) => accountId !== source.accountId);
+        const suffix = nameSuffix.trim() || '副本';
+        const created: ContentStyle[] = [];
+        sqlite.transaction(() => {
+          for (const accountId of filteredTargetIds) {
+            const account = sqlite.prepare('SELECT id FROM accounts WHERE id = ?').get(accountId);
+            if (!account) {
+              throw new Error(`Account ${accountId} not found.`);
+            }
+            created.push(this.create({
+              tenantId: source.tenantId,
+              accountId,
+              pluginCode: source.pluginCode,
+              workflowCode: source.workflowCode,
+              name: `${source.name} ${suffix}`,
+              description: source.description,
+              promptTemplateId: source.promptTemplateId,
+              modelPolicyJson: source.modelPolicyJson,
+              reviewPolicyJson: source.reviewPolicyJson,
+              dispatchPolicyJson: source.dispatchPolicyJson,
+              dedupePolicyJson: source.dedupePolicyJson,
+              status: 'active',
+            }));
+          }
+        })();
+        return created;
+      },
+    },
     contentItems: {
       create(input: CreateContentItemInput): ContentItem {
         const timestamp = now();
         const create = sqlite.transaction(() => {
           const result = sqlite.prepare(`
-            INSERT INTO content_items (title, body, source, status, createdAt, updatedAt)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `).run(input.title, input.body, input.source, input.status, timestamp, timestamp);
+            INSERT INTO content_items (
+              title, body, source, status, tenantId, accountId, pluginCode, styleId, runId,
+              topicsJson, mediaJson, sourceJson, riskJson, createdAt, updatedAt
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            input.title,
+            input.body,
+            input.source,
+            input.status,
+            input.tenantId ?? '',
+            input.accountId ?? null,
+            input.pluginCode ?? '',
+            input.styleId ?? '',
+            input.runId ?? '',
+            JSON.stringify(input.topicsJson ?? []),
+            JSON.stringify(input.mediaJson ?? []),
+            JSON.stringify(input.sourceJson ?? {}),
+            JSON.stringify(input.riskJson ?? {}),
+            timestamp,
+            timestamp,
+          );
           sqlite.prepare(`
             INSERT INTO content_versions (contentId, title, body, source, createdAt)
             VALUES (?, ?, ?, ?, ?)
@@ -623,6 +1182,9 @@ export async function createDatabase(filename: string) {
           return result.lastInsertRowid;
         });
         const id = create();
+        if (input.status === 'approved' && input.accountId) {
+          enqueueContentForDispatch(Number(id), 'content_approved');
+        }
         return mapContentItem(firstRow(sqlite.prepare('SELECT * FROM content_items WHERE id = ?').get(id)));
       },
       list(): ContentItem[] {
@@ -662,9 +1224,175 @@ export async function createDatabase(filename: string) {
         return !this.findById(id);
       },
     },
+    reviewItems: {
+      create(input: CreateReviewItemInput): ReviewItem {
+        const timestamp = now();
+        firstRow(sqlite.prepare('SELECT id FROM content_items WHERE id = ?').get(input.contentId));
+        const result = sqlite.prepare(`
+          INSERT INTO review_items (contentId, reviewMode, status, comment, createdAt, updatedAt)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          input.contentId,
+          input.reviewMode,
+          input.status,
+          input.comment ?? '',
+          timestamp,
+          timestamp,
+        );
+        return mapReviewItem(firstRow(sqlite.prepare('SELECT * FROM review_items WHERE id = ?').get(result.lastInsertRowid)));
+      },
+      listPending(): ReviewItem[] {
+        return select(`
+          SELECT * FROM review_items
+          WHERE status = 'pending'
+          ORDER BY createdAt ASC, id ASC
+        `).map(mapReviewItem);
+      },
+      approve(id: number, reviewerId: string, comment = ''): ReviewItem {
+        const timestamp = now();
+        const approve = sqlite.transaction(() => {
+          sqlite.prepare(`
+            UPDATE review_items
+            SET status = 'approved', reviewerId = ?, comment = ?, approvedAt = ?, updatedAt = ?
+            WHERE id = ?
+          `).run(reviewerId, comment, timestamp, timestamp, id);
+          const review = mapReviewItem(firstRow(sqlite.prepare('SELECT * FROM review_items WHERE id = ?').get(id)));
+          sqlite.prepare(`
+            UPDATE content_items
+            SET status = 'approved', updatedAt = ?
+            WHERE id = ?
+          `).run(timestamp, review.contentId);
+          enqueueContentForDispatch(review.contentId, 'review_approved');
+        });
+        approve();
+        return mapReviewItem(firstRow(sqlite.prepare('SELECT * FROM review_items WHERE id = ?').get(id)));
+      },
+      reject(id: number, reviewerId: string, comment = ''): ReviewItem {
+        const timestamp = now();
+        const reject = sqlite.transaction(() => {
+          sqlite.prepare(`
+            UPDATE review_items
+            SET status = 'rejected', reviewerId = ?, comment = ?, updatedAt = ?
+            WHERE id = ?
+          `).run(reviewerId, comment, timestamp, id);
+          const review = mapReviewItem(firstRow(sqlite.prepare('SELECT * FROM review_items WHERE id = ?').get(id)));
+          sqlite.prepare(`
+            UPDATE content_items
+            SET status = 'rejected', updatedAt = ?
+            WHERE id = ?
+          `).run(timestamp, review.contentId);
+        });
+        reject();
+        return mapReviewItem(firstRow(sqlite.prepare('SELECT * FROM review_items WHERE id = ?').get(id)));
+      },
+      requestRewrite(id: number, reviewerId: string, comment = ''): ReviewItem {
+        const timestamp = now();
+        const rewrite = sqlite.transaction(() => {
+          sqlite.prepare(`
+            UPDATE review_items
+            SET status = 'rewriting', reviewerId = ?, comment = ?, updatedAt = ?
+            WHERE id = ?
+          `).run(reviewerId, comment, timestamp, id);
+          const review = mapReviewItem(firstRow(sqlite.prepare('SELECT * FROM review_items WHERE id = ?').get(id)));
+          sqlite.prepare(`
+            UPDATE content_items
+            SET status = 'reviewing', updatedAt = ?
+            WHERE id = ?
+          `).run(timestamp, review.contentId);
+        });
+        rewrite();
+        return mapReviewItem(firstRow(sqlite.prepare('SELECT * FROM review_items WHERE id = ?').get(id)));
+      },
+      applyRewrite(id: number, reviewerId: string, comment: string, rewrittenBody: string): ReviewItem {
+        const timestamp = now();
+        const apply = sqlite.transaction(() => {
+          const review = mapReviewItem(firstRow(sqlite.prepare('SELECT * FROM review_items WHERE id = ?').get(id)));
+          const content = mapContentItem(firstRow(sqlite.prepare('SELECT * FROM content_items WHERE id = ?').get(review.contentId)));
+          sqlite.prepare(`
+            UPDATE content_items
+            SET body = ?, status = 'reviewing', updatedAt = ?
+            WHERE id = ?
+          `).run(rewrittenBody, timestamp, review.contentId);
+          sqlite.prepare(`
+            INSERT INTO content_versions (contentId, title, body, source, createdAt)
+            VALUES (?, ?, ?, 'ai', ?)
+          `).run(review.contentId, content.title, rewrittenBody, timestamp);
+          sqlite.prepare(`
+            UPDATE review_items
+            SET status = 'pending', reviewerId = ?, comment = ?, updatedAt = ?
+            WHERE id = ?
+          `).run(reviewerId, `AI rewrite generated from: ${comment}`, timestamp, id);
+        });
+        apply();
+        return mapReviewItem(firstRow(sqlite.prepare('SELECT * FROM review_items WHERE id = ?').get(id)));
+      },
+    },
     distributionTasks: {
+      enqueueContent(contentId: number, source = 'approved_content'): DistributionTask | null {
+        return enqueueContentForDispatch(contentId, source);
+      },
+      ensureLegacyPost(taskId: number): Post {
+        const timestamp = now();
+        const create = sqlite.transaction(() => {
+          const task = mapDistributionTask(firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE id = ?').get(taskId)));
+          if (task.legacyPostId) {
+            return task.legacyPostId;
+          }
+
+          const content = mapContentItem(firstRow(sqlite.prepare('SELECT * FROM content_items WHERE id = ?').get(task.contentId)));
+          const body = typeof task.platformPayload.content === 'string' && task.platformPayload.content.trim()
+            ? task.platformPayload.content
+            : content.body;
+          const mediaPaths = readMediaPathsFromTask(content, task);
+          const postResult = sqlite.prepare(`
+            INSERT INTO posts (accountId, content, mediaPaths, scheduledAt, status, createdAt, updatedAt)
+            VALUES (?, ?, ?, ?, 'queued', ?, ?)
+          `).run(
+            task.accountId,
+            body,
+            JSON.stringify(mediaPaths),
+            task.scheduledAt,
+            timestamp,
+            timestamp,
+          );
+          sqlite.prepare(`
+            UPDATE distribution_tasks
+            SET legacyPostId = ?, updatedAt = ?
+            WHERE id = ?
+          `).run(postResult.lastInsertRowid, timestamp, task.id);
+          return postResult.lastInsertRowid;
+        });
+        const postId = create();
+        return mapPost(firstRow(sqlite.prepare('SELECT * FROM posts WHERE id = ?').get(postId)));
+      },
       create(input: CreateDistributionTaskInput): DistributionTask {
         const timestamp = now();
+        const existingRow = sqlite.prepare(`
+          SELECT * FROM distribution_tasks
+          WHERE contentId = ? AND accountId = ?
+          ORDER BY id ASC
+          LIMIT 1
+        `).get(input.contentId, input.accountId);
+        if (existingRow) {
+          const existing = mapDistributionTask(existingRow as Record<string, unknown>);
+          assertNoScheduleConflict(input.contentId, input.accountId, input.scheduledAt, input.status, existing.id);
+          sqlite.prepare(`
+            UPDATE distribution_tasks
+            SET platform = ?, legacyPostId = ?, scheduledAt = ?, status = ?, platformPayload = ?, lastError = '', updatedAt = ?
+            WHERE id = ?
+          `).run(
+            input.platform,
+            input.legacyPostId ?? existing.legacyPostId,
+            input.scheduledAt,
+            input.status,
+            JSON.stringify(input.platformPayload),
+            timestamp,
+            existing.id,
+          );
+          return mapDistributionTask(firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE id = ?').get(existing.id)));
+        }
+
+        assertNoScheduleConflict(input.contentId, input.accountId, input.scheduledAt, input.status);
         const result = sqlite.prepare(`
           INSERT INTO distribution_tasks (contentId, accountId, platform, legacyPostId, scheduledAt, status, platformPayload, createdAt, updatedAt)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -705,6 +1433,7 @@ export async function createDatabase(filename: string) {
         const nextAccountId = input.accountId ?? existing.accountId;
         const account = mapAccount(firstRow(sqlite.prepare('SELECT * FROM accounts WHERE id = ?').get(nextAccountId)));
         firstRow(sqlite.prepare('SELECT id FROM content_items WHERE id = ?').get(nextContentId));
+        assertNoScheduleConflict(nextContentId, nextAccountId, input.scheduledAt, input.status, id);
 
         sqlite.prepare(`
           UPDATE distribution_tasks
@@ -778,6 +1507,40 @@ export async function createDatabase(filename: string) {
       },
       cancelMany(ids: number[]): DistributionTask[] {
         return ids.map((id) => this.cancel(id));
+      },
+      returnToReview(id: number, comment = 'Returned to review'): DistributionTask {
+        const timestamp = now();
+        const message = `Returned to review: ${comment}`;
+        const move = sqlite.transaction(() => {
+          const task = mapDistributionTask(firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE id = ?').get(id)));
+          sqlite.prepare(`
+            UPDATE distribution_tasks
+            SET status = 'failed', lastError = ?, updatedAt = ?
+            WHERE id = ?
+          `).run(message, timestamp, id);
+          sqlite.prepare(`
+            UPDATE content_items
+            SET status = 'reviewing', updatedAt = ?
+            WHERE id = ?
+          `).run(timestamp, task.contentId);
+          sqlite.prepare(`
+            INSERT INTO review_items (contentId, reviewMode, status, comment, createdAt, updatedAt)
+            SELECT ?, 'manual', 'pending', ?, ?, ?
+            WHERE NOT EXISTS (
+              SELECT 1 FROM review_items
+              WHERE contentId = ? AND status = 'pending'
+            )
+          `).run(task.contentId, comment, timestamp, timestamp, task.contentId);
+          if (task.legacyPostId) {
+            sqlite.prepare(`
+              UPDATE posts
+              SET status = 'failed', lastError = ?, updatedAt = ?
+              WHERE id = ?
+            `).run(message, timestamp, task.legacyPostId);
+          }
+        });
+        move();
+        return mapDistributionTask(firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE id = ?').get(id)));
       },
       delete(id: number): boolean {
         sqlite.transaction(() => {
