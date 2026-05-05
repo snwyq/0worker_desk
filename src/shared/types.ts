@@ -401,3 +401,132 @@ export interface AiResponse {
   content: string;
   usage?: any;
 }
+
+export type HotPersonGender = '男' | '女' | '';
+export type HotPersonAnalysisStatus = 'pending' | 'completed' | 'failed';
+export type HotPeopleProvider = 'mock' | 'dashscope' | 'apiyi';
+export type HotPeopleRetriever = 'mock' | 'model' | 'wikipedia';
+
+export interface HotPerson {
+  id: number;
+  name: string;
+  gender: HotPersonGender;
+  birthday: string;
+  verifyBirthday: string;
+  bio: string;
+  constellation: string;
+  sizhu: string;
+  dayunInfo: string;
+  photoUrl: string;
+  promptText: string;
+  sourceTopicTitle: string;
+  sourcePlatform: string;
+  analysisStatus: HotPersonAnalysisStatus;
+  updateTime: string;
+  createTime: string;
+}
+
+export interface UpsertHotPersonInput {
+  name: string;
+  gender?: HotPersonGender;
+  birthday?: string;
+  verifyBirthday?: string;
+  bio?: string;
+  constellation?: string;
+  sizhu?: string;
+  dayunInfo?: string;
+  photoUrl?: string;
+  promptText?: string;
+  sourceTopicTitle?: string;
+  sourcePlatform?: string;
+  analysisStatus?: HotPersonAnalysisStatus;
+}
+
+export interface AnalyzeHotPeopleInput {
+  limit?: number;
+  retriever?: HotPeopleRetriever;
+  provider?: HotPeopleProvider;
+}
+
+export interface AnalyzeHotPeopleResult {
+  selectedTopics: number;
+  processedTopics: number;
+  skippedTopics: number;
+  createdCount: number;
+  updatedCount: number;
+  failedCount: number;
+  failedReasons: string[];
+  pendingTopics: number;
+  coolingFailedTopics: number;
+  nextRetryAt?: string;
+  items: HotPerson[];
+}
+
+export type HotBaziScheduleStatus = 'draft' | 'queued' | 'reviewing' | 'published' | 'failed' | 'paused';
+
+export interface HotBaziTask {
+  id: number;
+  contentId: number;
+  accountId: number;
+  platform: PlatformCode;
+  hotPersonId: number | null;
+  sourceTopic: string;
+  scheduledAt: string;
+  status: HotBaziScheduleStatus;
+  automationEnabled: boolean;
+  intervalMinutes: number;
+  scheduleRuleJson: Record<string, unknown>;
+  mediaPathsJson: string[];
+  platformPayload: Record<string, unknown>;
+  lastError: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateHotBaziTaskInput {
+  contentId: number;
+  accountId: number;
+  platform: PlatformCode;
+  hotPersonId?: number | null;
+  sourceTopic?: string;
+  scheduledAt: string;
+  status: HotBaziScheduleStatus;
+  automationEnabled?: boolean;
+  intervalMinutes?: number;
+  scheduleRuleJson?: Record<string, unknown>;
+  mediaPathsJson?: string[];
+  platformPayload?: Record<string, unknown>;
+}
+
+export interface UpdateHotBaziTaskInput {
+  scheduledAt?: string;
+  status?: HotBaziScheduleStatus;
+  automationEnabled?: boolean;
+  intervalMinutes?: number;
+  scheduleRuleJson?: Record<string, unknown>;
+  mediaPathsJson?: string[];
+  platformPayload?: Record<string, unknown>;
+}
+
+export interface GenerateHotBaziBatchInput {
+  accountId: number;
+  scheduleRule: string;
+  automationEnabled: boolean;
+  intervalMinutes: number;
+  requireReview: boolean;
+  mediaPaths: string[];
+  promptTemplate?: string;
+  model?: 'qwen3.5-plus' | 'deepseek-v3.2' | 'kimi-k2.5';
+  limit?: number;
+}
+
+export interface GenerateHotBaziBatchResult {
+  createdContents: number;
+  createdReviews: number;
+  createdTasks: number;
+  skippedPeople: number;
+  failedPeople: number;
+  taskIds: number[];
+  contentIds: number[];
+  errors: string[];
+}

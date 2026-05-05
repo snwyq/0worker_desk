@@ -9,6 +9,7 @@ import type {
   AiWorkflowRun,
   AiWorkflowRunStatus,
   AppSetting,
+  AnalyzeHotPeopleResult,
   ContentItem,
   ContentStyle,
   ContentVersion,
@@ -20,14 +21,20 @@ import type {
   CreatePublishRunInput,
   CreateReviewItemInput,
   DistributionTask,
+  GenerateHotBaziBatchResult,
+  HotPerson,
+  HotBaziTask,
   Platform,
   Post,
   PublishRun,
   ReviewItem,
+  CreateHotBaziTaskInput,
+  UpsertHotPersonInput,
   UpdateAccountInput,
   UpdateContentItemInput,
   UpdateContentStyleInput,
   UpdateDistributionTaskInput,
+  UpdateHotBaziTaskInput,
 } from '../../shared/types.js';
 
 function now() {
@@ -242,6 +249,63 @@ function mapAiWorkflowRun(row: Record<string, unknown>): AiWorkflowRun {
   };
 }
 
+function mapHotPerson(row: Record<string, unknown>): HotPerson {
+  return {
+    id: Number(row.id),
+    name: String(row.name),
+    gender: String(row.gender ?? '') as HotPerson['gender'],
+    birthday: String(row.birthday ?? ''),
+    verifyBirthday: String(row.verifyBirthday ?? ''),
+    bio: String(row.bio ?? ''),
+    constellation: String(row.constellation ?? ''),
+    sizhu: String(row.sizhu ?? ''),
+    dayunInfo: String(row.dayunInfo ?? ''),
+    photoUrl: String(row.photoUrl ?? ''),
+    promptText: String(row.promptText ?? ''),
+    sourceTopicTitle: String(row.sourceTopicTitle ?? ''),
+    sourcePlatform: String(row.sourcePlatform ?? ''),
+    analysisStatus: String(row.analysisStatus ?? 'pending') as HotPerson['analysisStatus'],
+    updateTime: String(row.updateTime),
+    createTime: String(row.createTime),
+  };
+}
+
+function mapHotBaziTask(row: Record<string, unknown>): HotBaziTask {
+  return {
+    id: Number(row.id),
+    contentId: Number(row.contentId),
+    accountId: Number(row.accountId),
+    platform: row.platform as HotBaziTask['platform'],
+    hotPersonId: row.hotPersonId === null || row.hotPersonId === undefined ? null : Number(row.hotPersonId),
+    sourceTopic: String(row.sourceTopic ?? ''),
+    scheduledAt: String(row.scheduledAt),
+    status: row.status as HotBaziTask['status'],
+    automationEnabled: Number(row.automationEnabled ?? 0) === 1,
+    intervalMinutes: Number(row.intervalMinutes ?? 60),
+    scheduleRuleJson: parseJsonObject(row.scheduleRuleJson),
+    mediaPathsJson: parseJsonArray<string>(row.mediaPathsJson),
+    platformPayload: parseJsonObject(row.platformPayload),
+    lastError: String(row.lastError ?? ''),
+    createdAt: String(row.createdAt),
+    updatedAt: String(row.updatedAt),
+  };
+}
+
+function mapPublicFigureEvidence(row: Record<string, unknown>) {
+  return {
+    id: Number(row.id),
+    name: String(row.name),
+    title: String(row.title ?? ''),
+    summary: String(row.summary ?? ''),
+    imageUrl: String(row.imageUrl ?? ''),
+    birthDate: String(row.birthDate ?? ''),
+    gender: String(row.gender ?? '') as '' | '男' | '女',
+    source: String(row.source ?? ''),
+    updateTime: String(row.updateTime),
+    createTime: String(row.createTime),
+  };
+}
+
 function firstRow(row: unknown): Record<string, unknown> {
   if (!row) {
     throw new Error('Expected database row was not found');
@@ -448,8 +512,6 @@ export async function createDatabase(filename: string) {
   const sqlite = new Database(filename);
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');
-  // 强制同步热点表结构（镜像化重构阶段特供）
-  sqlite.exec('DROP TABLE IF EXISTS hot_topics_history;');
   sqlite.exec(schemaSql);
   
   // [ULTIMATE SYNC] 暴力同步 API Key，绕过所有逻辑，直接写入数据库
@@ -590,6 +652,40 @@ export async function createDatabase(filename: string) {
       } catch (e) {}
     }
     seedDefaultContentStyles(sqlite, now());
+  });
+
+  applyMigration('007_hot_people_verify_birthday', () => {
+    try {
+      sqlite.prepare("ALTER TABLE hot_people ADD COLUMN verifyBirthday TEXT NOT NULL DEFAULT ''").run();
+    } catch (e) {}
+  });
+
+  applyMigration('008_hot_bazi_tasks', () => {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS hot_bazi_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contentId INTEGER NOT NULL,
+        accountId INTEGER NOT NULL,
+        platform TEXT NOT NULL,
+        hotPersonId INTEGER,
+        sourceTopic TEXT NOT NULL DEFAULT '',
+        scheduledAt TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'draft',
+        automationEnabled INTEGER NOT NULL DEFAULT 0,
+        intervalMinutes INTEGER NOT NULL DEFAULT 60,
+        scheduleRuleJson TEXT NOT NULL DEFAULT '{}',
+        mediaPathsJson TEXT NOT NULL DEFAULT '[]',
+        platformPayload TEXT NOT NULL DEFAULT '{}',
+        lastError TEXT NOT NULL DEFAULT '',
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        FOREIGN KEY (contentId) REFERENCES content_items(id),
+        FOREIGN KEY (accountId) REFERENCES accounts(id),
+        FOREIGN KEY (hotPersonId) REFERENCES hot_people(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_hot_bazi_tasks_scheduled ON hot_bazi_tasks(scheduledAt, status);
+      CREATE INDEX IF NOT EXISTS idx_hot_bazi_tasks_account_status ON hot_bazi_tasks(accountId, status);
+    `);
   });
 
   // ---------------------------------------------------------
@@ -1586,6 +1682,12 @@ export async function createDatabase(filename: string) {
       },
     },
     hotTopicsHistory: {
+      buildIdentityKey(item: any): string {
+        const platform = String(item.platform ?? '').trim().toLowerCase();
+        const title = String(item.title ?? '').trim().toLowerCase();
+        const url = String(item.url ?? item.mobilUrl ?? '').trim().toLowerCase();
+        return [platform, title, url].join('||');
+      },
       saveMany(items: any[]): void {
         const timestamp = now();
         const insert = sqlite.prepare(`
@@ -1596,7 +1698,7 @@ export async function createDatabase(filename: string) {
         `);
         sqlite.transaction(() => {
           for (const item of items) {
-            insert.run(
+            const result = insert.run(
               item.platform,
               item.title || null,
               item.url || null,
@@ -1610,20 +1712,381 @@ export async function createDatabase(filename: string) {
               item.rank || null,
               timestamp
             );
+            sqlite.prepare(`
+              INSERT INTO hot_topic_analysis (hotTopicId, status, extractedNamesJson, retryCount, nextRetryAt, lastError, processedAt, createdAt, updatedAt)
+              VALUES (?, 'pending', '[]', 0, '', '', '', ?, ?)
+              ON CONFLICT(hotTopicId) DO NOTHING
+            `).run(result.lastInsertRowid, timestamp, timestamp);
           }
         })();
       },
-      getLatest(limit = 100): any[] {
+      saveIncremental(items: any[]): number {
+        const previousItems = this.getLatest(1000);
+        const previousKeys = new Set(previousItems.map((item: any) => this.buildIdentityKey(item)));
+        const uniqueNewItems = items.filter((item: any) => !previousKeys.has(this.buildIdentityKey(item)));
+
+        if (uniqueNewItems.length === 0) {
+          return 0;
+        }
+
+        this.saveMany(uniqueNewItems);
+        return uniqueNewItems.length;
+      },
+      getLatest(limit?: number): any[] {
         // 获取最近一次抓取的全部条目
         const lastTimestampRow = sqlite.prepare('SELECT createdAt FROM hot_topics_history ORDER BY createdAt DESC LIMIT 1').get() as { createdAt: string } | undefined;
         if (!lastTimestampRow) return [];
         
-        return select('SELECT * FROM hot_topics_history WHERE createdAt = ? ORDER BY rank ASC LIMIT ?', [lastTimestampRow.createdAt, limit]);
+        if (typeof limit === 'number') {
+          return select('SELECT * FROM hot_topics_history WHERE createdAt = ? ORDER BY rank ASC LIMIT ?', [lastTimestampRow.createdAt, limit]);
+        }
+
+        return select('SELECT * FROM hot_topics_history WHERE createdAt = ? ORDER BY rank ASC', [lastTimestampRow.createdAt]);
       },
       getLastFetchTime(): string | null {
         const row = sqlite.prepare('SELECT createdAt FROM hot_topics_history ORDER BY createdAt DESC LIMIT 1').get() as { createdAt: string } | undefined;
         return row ? row.createdAt : null;
+      },
+      deleteAll(): number {
+        const clear = sqlite.transaction(() => {
+          sqlite.prepare('DELETE FROM hot_topic_analysis').run();
+          return sqlite.prepare('DELETE FROM hot_topics_history').run();
+        });
+        const result = clear();
+        return Number(result.changes ?? 0);
       }
+    },
+    hotTopicAnalysis: {
+      listPending(limit = 100): any[] {
+        return select(`
+          SELECT h.*, a.status AS analysisStatus, a.extractedNamesJson, a.processedAt, a.retryCount, a.nextRetryAt, a.lastError
+          FROM hot_topics_history h
+          INNER JOIN hot_topic_analysis a ON a.hotTopicId = h.id
+          WHERE a.status IN ('pending', 'extracted')
+          ORDER BY h.id DESC
+          LIMIT ?
+        `, [limit]);
+      },
+      markExtracted(hotTopicId: number, names: string[]): void {
+        const timestamp = now();
+        sqlite.prepare(`
+          UPDATE hot_topic_analysis
+          SET status = 'extracted', extractedNamesJson = ?, lastError = '', updatedAt = ?
+          WHERE hotTopicId = ?
+        `).run(JSON.stringify(names), timestamp, hotTopicId);
+      },
+      markProcessed(hotTopicId: number, names: string[]): void {
+        const timestamp = now();
+        sqlite.prepare(`
+          UPDATE hot_topic_analysis
+          SET status = 'completed', extractedNamesJson = ?, processedAt = ?, lastError = '', updatedAt = ?
+          WHERE hotTopicId = ?
+        `).run(JSON.stringify(names), timestamp, timestamp, hotTopicId);
+      },
+      markFailed(hotTopicId: number, message: string): void {
+        const timestamp = now();
+        sqlite.prepare(`
+          UPDATE hot_topic_analysis
+          SET status = 'failed', retryCount = retryCount + 1, nextRetryAt = '', lastError = ?, updatedAt = ?
+          WHERE hotTopicId = ?
+        `).run(message, timestamp, hotTopicId);
+      },
+      getQueueSummary() {
+        const pendingRow = sqlite.prepare(`
+          SELECT COUNT(*) AS count
+          FROM hot_topic_analysis
+          WHERE status IN ('pending', 'extracted')
+        `).get() as { count: number };
+        const coolingRow = sqlite.prepare(`
+          SELECT COUNT(*) AS count
+          FROM hot_topic_analysis
+          WHERE 1 = 0
+        `).get() as { count: number };
+        return {
+          pendingTopics: Number(pendingRow?.count ?? 0),
+          coolingFailedTopics: Number(coolingRow?.count ?? 0),
+          nextRetryAt: '',
+        };
+      },
+      listFailed(limit = 200) {
+        return select(`
+          SELECT h.*, a.status AS analysisStatus, a.retryCount, a.nextRetryAt, a.lastError
+          FROM hot_topics_history h
+          INNER JOIN hot_topic_analysis a ON a.hotTopicId = h.id
+          WHERE a.status = 'failed'
+          ORDER BY a.nextRetryAt ASC, h.id ASC
+          LIMIT ?
+        `, [limit]);
+      },
+      resetAll(): number {
+        const timestamp = now();
+        const result = sqlite.prepare(`
+          UPDATE hot_topic_analysis
+          SET status = 'pending',
+              extractedNamesJson = '[]',
+              retryCount = 0,
+              nextRetryAt = '',
+              lastError = '',
+              processedAt = '',
+              updatedAt = ?
+        `).run(timestamp);
+        return Number(result.changes ?? 0);
+      },
+      resetToday(): number {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const tomorrowStart = new Date(todayStart);
+        tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+        const timestamp = now();
+        const result = sqlite.prepare(`
+          UPDATE hot_topic_analysis
+          SET status = 'pending',
+              extractedNamesJson = '[]',
+              retryCount = 0,
+              nextRetryAt = '',
+              lastError = '',
+              processedAt = '',
+              updatedAt = ?
+          WHERE hotTopicId IN (
+            SELECT id
+            FROM hot_topics_history
+            WHERE createdAt >= ? AND createdAt < ?
+          )
+        `).run(timestamp, todayStart.toISOString(), tomorrowStart.toISOString());
+        return Number(result.changes ?? 0);
+      },
+    },
+    hotPeople: {
+      upsert(input: UpsertHotPersonInput): HotPerson {
+        const timestamp = now();
+        const cleanBirthday = String(input.birthday ?? '').trim();
+        const cleanName = String(input.name ?? '').trim();
+        if (!cleanName) {
+          throw new Error('HOT_PERSON_NAME_REQUIRED');
+        }
+
+        const existingRow = cleanBirthday
+          ? sqlite.prepare('SELECT * FROM hot_people WHERE name = ? AND birthday = ? LIMIT 1').get(cleanName, cleanBirthday)
+          : sqlite.prepare("SELECT * FROM hot_people WHERE name = ? ORDER BY CASE WHEN birthday = '' THEN 0 ELSE 1 END, updateTime DESC LIMIT 1").get(cleanName);
+
+        if (existingRow) {
+          const existing = mapHotPerson(existingRow as Record<string, unknown>);
+          sqlite.prepare(`
+            UPDATE hot_people
+            SET gender = ?, birthday = ?, verifyBirthday = ?, bio = ?, constellation = ?, sizhu = ?, dayunInfo = ?, photoUrl = ?, promptText = ?,
+                sourceTopicTitle = ?, sourcePlatform = ?, analysisStatus = ?, updateTime = ?
+            WHERE id = ?
+          `).run(
+            input.gender ?? existing.gender,
+            cleanBirthday || existing.birthday,
+            input.verifyBirthday ?? existing.verifyBirthday,
+            input.bio ?? existing.bio,
+            input.constellation ?? existing.constellation,
+            input.sizhu ?? existing.sizhu,
+            input.dayunInfo ?? existing.dayunInfo,
+            input.photoUrl ?? existing.photoUrl,
+            input.promptText ?? existing.promptText,
+            input.sourceTopicTitle ?? existing.sourceTopicTitle,
+            input.sourcePlatform ?? existing.sourcePlatform,
+            input.analysisStatus ?? existing.analysisStatus,
+            timestamp,
+            existing.id,
+          );
+          return mapHotPerson(firstRow(sqlite.prepare('SELECT * FROM hot_people WHERE id = ?').get(existing.id)));
+        }
+
+        const result = sqlite.prepare(`
+          INSERT INTO hot_people (
+            name, gender, birthday, verifyBirthday, bio, constellation, sizhu, dayunInfo, photoUrl, promptText,
+            sourceTopicTitle, sourcePlatform, analysisStatus, updateTime, createTime
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          cleanName,
+          input.gender ?? '',
+          cleanBirthday,
+          input.verifyBirthday ?? '',
+          input.bio ?? '',
+          input.constellation ?? '',
+          input.sizhu ?? '',
+          input.dayunInfo ?? '',
+          input.photoUrl ?? '',
+          input.promptText ?? '',
+          input.sourceTopicTitle ?? '',
+          input.sourcePlatform ?? '',
+          input.analysisStatus ?? 'pending',
+          timestamp,
+          timestamp,
+        );
+        return mapHotPerson(firstRow(sqlite.prepare('SELECT * FROM hot_people WHERE id = ?').get(result.lastInsertRowid)));
+      },
+      list(limit = 200): HotPerson[] {
+        return select('SELECT * FROM hot_people ORDER BY updateTime DESC, id DESC LIMIT ?', [limit]).map(mapHotPerson);
+      },
+      findByName(name: string): HotPerson | null {
+        const row = sqlite.prepare('SELECT * FROM hot_people WHERE name = ? ORDER BY updateTime DESC LIMIT 1').get(name);
+        return row ? mapHotPerson(row as Record<string, unknown>) : null;
+      },
+      deleteAll(): number {
+        const result = sqlite.prepare('DELETE FROM hot_people').run();
+        return Number(result.changes ?? 0);
+      },
+      deleteToday(): number {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const tomorrowStart = new Date(todayStart);
+        tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+        const result = sqlite.prepare(`
+          DELETE FROM hot_people
+          WHERE createTime >= ? AND createTime < ?
+        `).run(todayStart.toISOString(), tomorrowStart.toISOString());
+        return Number(result.changes ?? 0);
+      },
+    },
+    hotBaziTasks: {
+      create(input: CreateHotBaziTaskInput): HotBaziTask {
+        const timestamp = now();
+        firstRow(sqlite.prepare('SELECT id FROM content_items WHERE id = ?').get(input.contentId));
+        firstRow(sqlite.prepare('SELECT id FROM accounts WHERE id = ?').get(input.accountId));
+        if (input.hotPersonId) {
+          firstRow(sqlite.prepare('SELECT id FROM hot_people WHERE id = ?').get(input.hotPersonId));
+        }
+        const result = sqlite.prepare(`
+          INSERT INTO hot_bazi_tasks (
+            contentId, accountId, platform, hotPersonId, sourceTopic, scheduledAt, status,
+            automationEnabled, intervalMinutes, scheduleRuleJson, mediaPathsJson, platformPayload, lastError, createdAt, updatedAt
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)
+        `).run(
+          input.contentId,
+          input.accountId,
+          input.platform,
+          input.hotPersonId ?? null,
+          input.sourceTopic ?? '',
+          input.scheduledAt,
+          input.status,
+          input.automationEnabled ? 1 : 0,
+          input.intervalMinutes ?? 60,
+          JSON.stringify(input.scheduleRuleJson ?? {}),
+          JSON.stringify(input.mediaPathsJson ?? []),
+          JSON.stringify(input.platformPayload ?? {}),
+          timestamp,
+          timestamp,
+        );
+        return mapHotBaziTask(firstRow(sqlite.prepare('SELECT * FROM hot_bazi_tasks WHERE id = ?').get(result.lastInsertRowid)));
+      },
+      list(): HotBaziTask[] {
+        return select('SELECT * FROM hot_bazi_tasks ORDER BY scheduledAt DESC, id DESC').map(mapHotBaziTask);
+      },
+      listByAccount(accountId: number): HotBaziTask[] {
+        return select('SELECT * FROM hot_bazi_tasks WHERE accountId = ? ORDER BY scheduledAt DESC, id DESC', [accountId]).map(mapHotBaziTask);
+      },
+      findById(id: number): HotBaziTask | null {
+        const row = sqlite.prepare('SELECT * FROM hot_bazi_tasks WHERE id = ?').get(id);
+        return row ? mapHotBaziTask(row as Record<string, unknown>) : null;
+      },
+      update(id: number, input: UpdateHotBaziTaskInput): HotBaziTask {
+        const existing = this.findById(id);
+        if (!existing) {
+          throw new Error(`Hot bazi task ${id} was not found`);
+        }
+        const timestamp = now();
+        sqlite.prepare(`
+          UPDATE hot_bazi_tasks
+          SET scheduledAt = ?, status = ?, automationEnabled = ?, intervalMinutes = ?,
+              scheduleRuleJson = ?, mediaPathsJson = ?, platformPayload = ?, updatedAt = ?
+          WHERE id = ?
+        `).run(
+          input.scheduledAt ?? existing.scheduledAt,
+          input.status ?? existing.status,
+          (input.automationEnabled ?? existing.automationEnabled) ? 1 : 0,
+          input.intervalMinutes ?? existing.intervalMinutes,
+          JSON.stringify(input.scheduleRuleJson ?? existing.scheduleRuleJson),
+          JSON.stringify(input.mediaPathsJson ?? existing.mediaPathsJson),
+          JSON.stringify(input.platformPayload ?? existing.platformPayload),
+          timestamp,
+          id,
+        );
+        return mapHotBaziTask(firstRow(sqlite.prepare('SELECT * FROM hot_bazi_tasks WHERE id = ?').get(id)));
+      },
+      delete(id: number): boolean {
+        sqlite.prepare('DELETE FROM hot_bazi_tasks WHERE id = ?').run(id);
+        return !this.findById(id);
+      },
+      deleteMany(ids: number[]): number {
+        const remove = sqlite.transaction((taskIds: number[]) => {
+          for (const id of taskIds) {
+            sqlite.prepare('DELETE FROM hot_bazi_tasks WHERE id = ?').run(id);
+          }
+        });
+        remove(ids);
+        return ids.length;
+      },
+      enqueueToDistribution(id: number): DistributionTask {
+        const task = this.findById(id);
+        if (!task) {
+          throw new Error(`Hot bazi task ${id} was not found`);
+        }
+        return enqueueContentForDispatch(task.contentId, 'hot_bazi_manual') ?? mapDistributionTask(
+          firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE contentId = ? ORDER BY id ASC LIMIT 1').get(task.contentId)),
+        );
+      },
+      enqueueManyToDistribution(ids: number[]): DistributionTask[] {
+        return ids.map((id) => this.enqueueToDistribution(id));
+      },
+    },
+    publicFigureEvidence: {
+      upsert(input: {
+        name: string;
+        title: string;
+        summary: string;
+        imageUrl: string;
+        birthDate: string;
+        gender: '' | '男' | '女';
+        source: string;
+      }) {
+        const timestamp = now();
+        const existing = sqlite.prepare('SELECT * FROM public_figure_evidence_cache WHERE name = ?').get(input.name);
+        if (existing) {
+          sqlite.prepare(`
+            UPDATE public_figure_evidence_cache
+            SET title = ?, summary = ?, imageUrl = ?, birthDate = ?, gender = ?, source = ?, updateTime = ?
+            WHERE name = ?
+          `).run(
+            input.title,
+            input.summary,
+            input.imageUrl,
+            input.birthDate,
+            input.gender,
+            input.source,
+            timestamp,
+            input.name,
+          );
+          return mapPublicFigureEvidence(firstRow(sqlite.prepare('SELECT * FROM public_figure_evidence_cache WHERE name = ?').get(input.name)));
+        }
+
+        const result = sqlite.prepare(`
+          INSERT INTO public_figure_evidence_cache (
+            name, title, summary, imageUrl, birthDate, gender, source, updateTime, createTime
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          input.name,
+          input.title,
+          input.summary,
+          input.imageUrl,
+          input.birthDate,
+          input.gender,
+          input.source,
+          timestamp,
+          timestamp,
+        );
+        return mapPublicFigureEvidence(firstRow(sqlite.prepare('SELECT * FROM public_figure_evidence_cache WHERE id = ?').get(result.lastInsertRowid)));
+      },
+      findByName(name: string) {
+        const row = sqlite.prepare('SELECT * FROM public_figure_evidence_cache WHERE name = ?').get(name);
+        return row ? mapPublicFigureEvidence(row as Record<string, unknown>) : null;
+      },
     },
     publishRuns: {
       create(input: CreatePublishRunInput): PublishRun {

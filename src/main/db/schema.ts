@@ -248,4 +248,82 @@ CREATE TABLE IF NOT EXISTS hot_topics_history (
 
 CREATE INDEX IF NOT EXISTS idx_hot_topics_created_at ON hot_topics_history(createdAt);
 CREATE INDEX IF NOT EXISTS idx_hot_topics_platform ON hot_topics_history(platform);
+
+CREATE TABLE IF NOT EXISTS hot_topic_analysis (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hotTopicId INTEGER NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'pending',
+  extractedNamesJson TEXT NOT NULL DEFAULT '[]',
+  retryCount INTEGER NOT NULL DEFAULT 0,
+  nextRetryAt TEXT NOT NULL DEFAULT '',
+  lastError TEXT NOT NULL DEFAULT '',
+  processedAt TEXT NOT NULL DEFAULT '',
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (hotTopicId) REFERENCES hot_topics_history(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_hot_topic_analysis_status ON hot_topic_analysis(status);
+
+CREATE TABLE IF NOT EXISTS public_figure_evidence_cache (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  imageUrl TEXT NOT NULL DEFAULT '',
+  birthDate TEXT NOT NULL DEFAULT '',
+  gender TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT '',
+  updateTime TEXT NOT NULL,
+  createTime TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_public_figure_evidence_update_time ON public_figure_evidence_cache(updateTime);
+
+CREATE TABLE IF NOT EXISTS hot_people (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  gender TEXT NOT NULL DEFAULT '',
+  birthday TEXT NOT NULL DEFAULT '',
+  verifyBirthday TEXT NOT NULL DEFAULT '',
+  bio TEXT NOT NULL DEFAULT '',
+  constellation TEXT NOT NULL DEFAULT '',
+  sizhu TEXT NOT NULL DEFAULT '',
+  dayunInfo TEXT NOT NULL DEFAULT '',
+  photoUrl TEXT NOT NULL DEFAULT '',
+  promptText TEXT NOT NULL DEFAULT '',
+  sourceTopicTitle TEXT NOT NULL DEFAULT '',
+  sourcePlatform TEXT NOT NULL DEFAULT '',
+  analysisStatus TEXT NOT NULL DEFAULT 'pending',
+  updateTime TEXT NOT NULL,
+  createTime TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_hot_people_name_birthday ON hot_people(name, birthday);
+CREATE INDEX IF NOT EXISTS idx_hot_people_update_time ON hot_people(updateTime);
+
+CREATE TABLE IF NOT EXISTS hot_bazi_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contentId INTEGER NOT NULL,
+  accountId INTEGER NOT NULL,
+  platform TEXT NOT NULL,
+  hotPersonId INTEGER,
+  sourceTopic TEXT NOT NULL DEFAULT '',
+  scheduledAt TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  automationEnabled INTEGER NOT NULL DEFAULT 0,
+  intervalMinutes INTEGER NOT NULL DEFAULT 60,
+  scheduleRuleJson TEXT NOT NULL DEFAULT '{}',
+  mediaPathsJson TEXT NOT NULL DEFAULT '[]',
+  platformPayload TEXT NOT NULL DEFAULT '{}',
+  lastError TEXT NOT NULL DEFAULT '',
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (contentId) REFERENCES content_items(id),
+  FOREIGN KEY (accountId) REFERENCES accounts(id),
+  FOREIGN KEY (hotPersonId) REFERENCES hot_people(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_hot_bazi_tasks_scheduled ON hot_bazi_tasks(scheduledAt, status);
+CREATE INDEX IF NOT EXISTS idx_hot_bazi_tasks_account_status ON hot_bazi_tasks(accountId, status);
 `;

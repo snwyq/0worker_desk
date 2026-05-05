@@ -1,5 +1,5 @@
 import electron from 'electron';
-import type { CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreatePostInput, CreateReviewItemInput, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput } from '../src/shared/types.js';
+import type { AnalyzeHotPeopleInput, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, GenerateHotBaziBatchInput, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput } from '../src/shared/types.js';
 
 const { contextBridge, ipcRenderer } = electron;
 
@@ -57,6 +57,15 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
     cancelMany: (ids: number[]) => ipcRenderer.invoke('distributionTasks:cancelMany', ids),
     returnToReview: (id: number, comment?: string) => ipcRenderer.invoke('distributionTasks:returnToReview', id, comment),
   },
+  hotBaziTasks: {
+    list: () => ipcRenderer.invoke('hotBaziTasks:list'),
+    create: (input: CreateHotBaziTaskInput) => ipcRenderer.invoke('hotBaziTasks:create', input),
+    update: (id: number, input: UpdateHotBaziTaskInput) => ipcRenderer.invoke('hotBaziTasks:update', id, input),
+    delete: (id: number) => ipcRenderer.invoke('hotBaziTasks:delete', id),
+    deleteMany: (ids: number[]) => ipcRenderer.invoke('hotBaziTasks:deleteMany', ids),
+    enqueue: (id: number) => ipcRenderer.invoke('hotBaziTasks:enqueue', id),
+    enqueueMany: (ids: number[]) => ipcRenderer.invoke('hotBaziTasks:enqueueMany', ids),
+  },
   publishRuns: {
     list: (taskId?: number) => ipcRenderer.invoke('publishRuns:list', taskId),
   },
@@ -83,6 +92,13 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
     startWorkflowRun: (input: any) => ipcRenderer.invoke('ai:startWorkflowRun', input),
     getWorkflowRun: (runId: string) => ipcRenderer.invoke('ai:getWorkflowRun', runId),
     listHotTopics: (force?: boolean) => ipcRenderer.invoke('ai:listHotTopics', force),
+    getHotPeopleQueueSummary: () => ipcRenderer.invoke('ai:getHotPeopleQueueSummary'),
+    getHotPeopleAnalyzeProgress: () => ipcRenderer.invoke('ai:getHotPeopleAnalyzeProgress'),
+    listHotPeople: () => ipcRenderer.invoke('ai:listHotPeople'),
+    deleteAllHotPeople: () => ipcRenderer.invoke('ai:deleteAllHotPeople'),
+    resetHotPeopleAnalysis: () => ipcRenderer.invoke('ai:resetHotPeopleAnalysis'),
+    analyzeHotPeople: (input?: AnalyzeHotPeopleInput) => ipcRenderer.invoke('ai:analyzeHotPeople', input),
+    generateHotBaziBatch: (input: GenerateHotBaziBatchInput) => ipcRenderer.invoke('ai:generateHotBaziBatch', input),
     previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any) => ipcRenderer.invoke('ai:previewWorkflow_v3', pluginCode, workflowCode, inputParams),
     startAgentSchedule: (accountId: number) => ipcRenderer.invoke('ai:startAgentSchedule', accountId),
     onWorkflowLog: (callback: any) => {

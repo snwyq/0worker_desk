@@ -1,4 +1,4 @@
-import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AppSetting, ConnectionTestResult, ContentItem, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DistributionTask, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput } from '../shared/types';
+import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AnalyzeHotPeopleInput, AnalyzeHotPeopleResult, AppSetting, ConnectionTestResult, ContentItem, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DistributionTask, GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotBaziTask, HotPerson, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput } from '../shared/types';
 
 declare global {
   interface Window {
@@ -56,6 +56,15 @@ declare global {
         cancelMany: (ids: number[]) => Promise<DistributionTask[]>;
         returnToReview?: (id: number, comment?: string) => Promise<DistributionTask>;
       };
+      hotBaziTasks?: {
+        list: () => Promise<HotBaziTask[]>;
+        create: (input: CreateHotBaziTaskInput) => Promise<HotBaziTask>;
+        update: (id: number, input: UpdateHotBaziTaskInput) => Promise<HotBaziTask>;
+        delete: (id: number) => Promise<{ ok: boolean }>;
+        deleteMany: (ids: number[]) => Promise<{ deleted: number }>;
+        enqueue: (id: number) => Promise<DistributionTask>;
+        enqueueMany: (ids: number[]) => Promise<DistributionTask[]>;
+      };
       publishRuns: {
         list: (taskId?: number) => Promise<PublishRun[]>;
       };
@@ -86,7 +95,15 @@ declare global {
           inputParams?: Record<string, unknown>;
         }) => Promise<import('../shared/types').AiWorkflowRun>;
         getWorkflowRun: (runId: string) => Promise<import('../shared/types').AiWorkflowRun | null>;
-        listHotTopics: (force?: boolean) => Promise<{ items: any[]; lastFetchTime: string | null }>;
+        listHotTopics: (force?: boolean) => Promise<{ items: any[]; lastFetchTime: string | null; sourceStatus?: Array<{ platform: string; ok: boolean; reason?: string; count?: number }>; insertedCount?: number }>;
+        deleteAllHotTopics: () => Promise<{ deleted: number }>;
+        listHotPeople: () => Promise<HotPerson[]>;
+        getHotPeopleQueueSummary: () => Promise<{ pendingTopics: number; coolingFailedTopics: number; nextRetryAt?: string }>;
+        getHotPeopleAnalyzeProgress: () => Promise<{ running: boolean; selectedTopics: number; processedTopics: number; pendingTopics: number }>;
+        deleteAllHotPeople: () => Promise<{ deleted: number }>;
+        resetHotPeopleAnalysis: () => Promise<{ deleted: number; reset: number }>;
+        analyzeHotPeople: (input?: AnalyzeHotPeopleInput) => Promise<AnalyzeHotPeopleResult>;
+        generateHotBaziBatch?: (input: GenerateHotBaziBatchInput) => Promise<GenerateHotBaziBatchResult>;
         previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any) => Promise<{ runId: string }>;
         startAgentSchedule: (accountId: number) => Promise<{ ok: boolean; message: string }>;
         onWorkflowLog: (callback: (log: any) => void) => (() => void);

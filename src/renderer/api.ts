@@ -1,4 +1,4 @@
-import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AiWorkflowRun, AppSetting, ConnectionTestResult, ContentItem, ContentVersion, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DistributionTask, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput } from '../shared/types';
+import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AiWorkflowRun, AnalyzeHotPeopleInput, AnalyzeHotPeopleResult, AppSetting, ConnectionTestResult, ContentItem, ContentVersion, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DistributionTask, GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotBaziTask, HotPerson, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput } from '../shared/types';
 
 
 const httpBaseUrl = 'http://127.0.0.1:5183';
@@ -298,6 +298,66 @@ export const appApi = {
       });
     },
   },
+  hotBaziTasks: {
+    list: (): Promise<HotBaziTask[]> => {
+      if (window.weiboPublisher?.hotBaziTasks) {
+        return window.weiboPublisher.hotBaziTasks.list();
+      }
+      return httpJson<HotBaziTask[]>('/hot-bazi-tasks');
+    },
+    create: (input: CreateHotBaziTaskInput): Promise<HotBaziTask> => {
+      if (window.weiboPublisher?.hotBaziTasks?.create) {
+        return window.weiboPublisher.hotBaziTasks.create(input);
+      }
+      return httpJson<HotBaziTask>('/hot-bazi-tasks', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+    update: (id: number, input: UpdateHotBaziTaskInput): Promise<HotBaziTask> => {
+      if (window.weiboPublisher?.hotBaziTasks?.update) {
+        return window.weiboPublisher.hotBaziTasks.update(id, input);
+      }
+      return httpJson<HotBaziTask>(`/hot-bazi-tasks/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      });
+    },
+    delete: (id: number): Promise<{ ok: boolean }> => {
+      if (window.weiboPublisher?.hotBaziTasks?.delete) {
+        return window.weiboPublisher.hotBaziTasks.delete(id);
+      }
+      return httpJson<{ ok: boolean }>(`/hot-bazi-tasks/${id}`, {
+        method: 'DELETE',
+      });
+    },
+    deleteMany: (ids: number[]): Promise<{ deleted: number }> => {
+      if (window.weiboPublisher?.hotBaziTasks?.deleteMany) {
+        return window.weiboPublisher.hotBaziTasks.deleteMany(ids);
+      }
+      return httpJson<{ deleted: number }>('/hot-bazi-tasks/delete-many', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      });
+    },
+    enqueue: (id: number): Promise<DistributionTask> => {
+      if (window.weiboPublisher?.hotBaziTasks?.enqueue) {
+        return window.weiboPublisher.hotBaziTasks.enqueue(id);
+      }
+      return httpJson<DistributionTask>(`/hot-bazi-tasks/${id}/enqueue`, {
+        method: 'POST',
+      });
+    },
+    enqueueMany: (ids: number[]): Promise<DistributionTask[]> => {
+      if (window.weiboPublisher?.hotBaziTasks?.enqueueMany) {
+        return window.weiboPublisher.hotBaziTasks.enqueueMany(ids);
+      }
+      return httpJson<DistributionTask[]>('/hot-bazi-tasks/enqueue-many', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      });
+    },
+  },
   publishRuns: {
     list: (taskId?: number): Promise<PublishRun[]> => {
       if (window.weiboPublisher?.publishRuns) {
@@ -432,11 +492,71 @@ export const appApi = {
       }
       return httpJson<AiWorkflowRun>(`/ai/workflow-runs/${encodeURIComponent(runId)}`);
     },
-    listHotTopics: async (force = false): Promise<{ items: any[], lastFetchTime: string | null }> => {
+    listHotTopics: async (force = false): Promise<{ items: any[], lastFetchTime: string | null; sourceStatus?: Array<{ platform: string; ok: boolean; reason?: string; count?: number }>; insertedCount?: number }> => {
       if (window.weiboPublisher?.ai) {
         return await window.weiboPublisher.ai.listHotTopics(force);
       }
-      return await httpJson<{ items: any[], lastFetchTime: string | null }>(`/ai/hot-topics${force ? '?force=true' : ''}`);
+      return await httpJson<{ items: any[], lastFetchTime: string | null; sourceStatus?: Array<{ platform: string; ok: boolean; reason?: string; count?: number }>; insertedCount?: number }>(`/ai/hot-topics${force ? '?force=true' : ''}`);
+    },
+    deleteAllHotTopics: (): Promise<{ deleted: number }> => {
+      if (window.weiboPublisher?.ai?.deleteAllHotTopics) {
+        return window.weiboPublisher.ai.deleteAllHotTopics();
+      }
+      return httpJson<{ deleted: number }>('/ai/hot-topics', {
+        method: 'DELETE',
+      });
+    },
+    listHotPeople: (): Promise<HotPerson[]> => {
+      if (window.weiboPublisher?.ai?.listHotPeople) {
+        return window.weiboPublisher.ai.listHotPeople();
+      }
+      return httpJson<HotPerson[]>('/ai/hot-people');
+    },
+    getHotPeopleQueueSummary: (): Promise<{ pendingTopics: number; coolingFailedTopics: number; nextRetryAt?: string }> => {
+      if (window.weiboPublisher?.ai?.getHotPeopleQueueSummary) {
+        return window.weiboPublisher.ai.getHotPeopleQueueSummary();
+      }
+      return httpJson<{ pendingTopics: number; coolingFailedTopics: number; nextRetryAt?: string }>('/ai/hot-people-queue-summary');
+    },
+    getHotPeopleAnalyzeProgress: (): Promise<{ running: boolean; selectedTopics: number; processedTopics: number; pendingTopics: number }> => {
+      if (window.weiboPublisher?.ai?.getHotPeopleAnalyzeProgress) {
+        return window.weiboPublisher.ai.getHotPeopleAnalyzeProgress();
+      }
+      return httpJson<{ running: boolean; selectedTopics: number; processedTopics: number; pendingTopics: number }>('/ai/hot-people-analyze-progress');
+    },
+    deleteAllHotPeople: (): Promise<{ deleted: number }> => {
+      if (window.weiboPublisher?.ai?.deleteAllHotPeople) {
+        return window.weiboPublisher.ai.deleteAllHotPeople();
+      }
+      return httpJson<{ deleted: number }>('/ai/hot-people', {
+        method: 'DELETE',
+      });
+    },
+    resetHotPeopleAnalysis: (): Promise<{ deleted: number; reset: number }> => {
+      if (window.weiboPublisher?.ai?.resetHotPeopleAnalysis) {
+        return window.weiboPublisher.ai.resetHotPeopleAnalysis();
+      }
+      return httpJson<{ deleted: number; reset: number }>('/ai/hot-people/reset-analysis', {
+        method: 'POST',
+      });
+    },
+    analyzeHotPeople: (input: AnalyzeHotPeopleInput = {}): Promise<AnalyzeHotPeopleResult> => {
+      if (window.weiboPublisher?.ai?.analyzeHotPeople) {
+        return window.weiboPublisher.ai.analyzeHotPeople(input);
+      }
+      return httpJson<AnalyzeHotPeopleResult>('/ai/hot-people/analyze', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+    generateHotBaziBatch: (input: GenerateHotBaziBatchInput): Promise<GenerateHotBaziBatchResult> => {
+      if (window.weiboPublisher?.ai?.generateHotBaziBatch) {
+        return window.weiboPublisher.ai.generateHotBaziBatch(input);
+      }
+      return httpJson<GenerateHotBaziBatchResult>('/ai/hot-bazi/generate-batch', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
     },
     previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any): Promise<{ runId: string }> => {
       if (window.weiboPublisher?.ai) {

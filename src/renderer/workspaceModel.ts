@@ -1,13 +1,14 @@
-export type WorkspaceModule = 
-  | 'home' 
-  | 'ai-writer' 
+export type WorkspaceModule =
+  | 'home'
+  | 'ai-writer'
   | 'agent-engine'
-  | 'asset-factory' 
-  | 'accounts' 
-  | 'distribution' 
+  | 'asset-factory'
+  | 'accounts'
+  | 'distribution'
   | 'hot-topics'
+  | 'hot-people'
+  | 'hot-bazi'
   | 'settings';
-
 
 export interface WorkspaceTab {
   id: string;
@@ -31,7 +32,6 @@ export const moduleTabs: Record<WorkspaceModule, WorkspaceTab> = {
     subtitle: '实时监控与核心策略调度',
     pinned: true,
   },
-
   'ai-writer': {
     id: 'ai-writer-tab',
     module: 'ai-writer',
@@ -69,6 +69,18 @@ export const moduleTabs: Record<WorkspaceModule, WorkspaceTab> = {
     title: '实时热点',
     subtitle: '聚合全网热点，提供即时创作灵感',
   },
+  'hot-people': {
+    id: 'hot-people-tab',
+    module: 'hot-people',
+    title: '热点人物',
+    subtitle: '从热点中提取公众人物并沉淀本地资料库',
+  },
+  'hot-bazi': {
+    id: 'hot-bazi-tab',
+    module: 'hot-bazi',
+    title: '热点八字',
+    subtitle: '批量生成热点人物八字内容并进入审核与任务表',
+  },
   settings: {
     id: 'settings-engine',
     module: 'settings',
@@ -76,7 +88,6 @@ export const moduleTabs: Record<WorkspaceModule, WorkspaceTab> = {
     subtitle: '偏好设置、网络环境与安全选项',
   },
 };
-
 
 export function createInitialWorkspace(): WorkspaceState {
   const homeTab = moduleTabs.home;

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createDatabase } from '../../src/main/db/database.js';
 import { startHttpApi } from '../../src/main/ipc/handlers.js';
 import { PublishScheduler } from '../../src/main/publisher/Scheduler.js';
@@ -6,6 +6,8 @@ import { PublishScheduler } from '../../src/main/publisher/Scheduler.js';
 const servers: Array<{ close: () => void }> = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   while (servers.length) {
     servers.pop()?.close();
   }
@@ -1021,6 +1023,95 @@ describe('http api', () => {
     expect(result.lastFetchTime).toBeTruthy();
   });
 
+  test('does not auto-refresh hot topics when the page loads without force', async () => {
+    const db = await createDatabase(':memory:');
+    db.settings.set('ai.tophubKey', 'test-hot-key');
+    db.settings.set('ai.tophubBaseUrl', 'https://example.test/nodes');
+    db.hotTopicsHistory.saveMany([
+      {
+        platform: '寰崥',
+        title: 'cached only topic',
+        rank: 1,
+        hotValue: '100w',
+      },
+    ]);
+    const scheduler = new PublishScheduler(db);
+    const port = 51857;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({
+        status: 200,
+        data: {
+          items: [{ title: 'fresh topic from upstream' }],
+        },
+      }),
+    })) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const nativeFetch = fetch;
+    const response = await nativeFetch(`http://127.0.0.1:${port}/ai/hot-topics`);
+    const result = await response.json() as { items: Array<{ title: string }>; lastFetchTime: string | null };
+
+    expect(response.status).toBe(200);
+    expect(result.items).toEqual([
+      expect.objectContaining({ title: 'cached only topic' }),
+    ]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('reports platform-level sync failures when one hot-topic source returns no data', async () => {
+    const nativeFetch = fetch;
+    const db = await createDatabase(':memory:');
+    db.settings.set('ai.tophubKey', 'test-hot-key');
+    db.settings.set('ai.tophubBaseUrl', 'https://example.test/nodes');
+    const scheduler = new PublishScheduler(db);
+    const port = 51859;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/WmoOzOle4E')) {
+        return {
+          ok: false,
+          status: 503,
+          statusText: 'Service Unavailable',
+          json: async () => ({ status: 503 }),
+        };
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({
+          status: 200,
+          data: {
+            items: [{ title: `topic from ${url.split('/').pop()}` }],
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await nativeFetch(`http://127.0.0.1:${port}/ai/hot-topics?force=true`);
+    const result = await response.json() as {
+      items: Array<{ title: string }>;
+      sourceStatus?: Array<{ platform: string; ok: boolean; reason?: string }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(result.items).toHaveLength(3);
+    expect(result.sourceStatus).toEqual(expect.arrayContaining([
+      expect.objectContaining({ platform: '腾讯', ok: false, reason: expect.stringContaining('503') }),
+    ]));
+  });
+
   test('stores successful account connection checks in health fields', async () => {
     const db = await createDatabase(':memory:');
     const account = db.accounts.create({
@@ -1050,6 +1141,28 @@ describe('http api', () => {
       status: 'active',
       healthMessage: expect.stringContaining('Connected to Healthy account'),
     });
+  });
+
+  test('deletes all hot topic rows through the local api', async () => {
+    const db = await createDatabase(':memory:');
+    db.hotTopicsHistory.saveMany([
+      { platform: '寰崥', title: 'topic one', rank: 1, hotValue: '100w' },
+      { platform: '澶存潯', title: 'topic two', rank: 2, hotValue: '90w' },
+    ]);
+    const scheduler = new PublishScheduler(db);
+    const port = 51860;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/ai/hot-topics`, {
+      method: 'DELETE',
+    });
+    const result = await response.json() as { deleted: number };
+
+    expect(response.status).toBe(200);
+    expect(result.deleted).toBe(2);
+    expect(db.hotTopicsHistory.getLatest()).toEqual([]);
+    expect(db.hotTopicAnalysis.listPending(10)).toEqual([]);
   });
 
   test('explains manual debugging port connection failures', async () => {
@@ -1469,6 +1582,73 @@ describe('http api', () => {
     }));
   });
 
+  test('creates hot bazi tasks through the local api', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'hot bazi api account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+    });
+    const person = db.hotPeople.upsert({
+      name: '接口测试人物',
+      birthday: '1992年2月2日',
+      sourceTopicTitle: '接口测试热点',
+      sourcePlatform: 'weibo',
+      analysisStatus: 'completed',
+    });
+    const content = db.contentItems.create({
+      title: '接口热点八字内容',
+      body: '接口热点八字正文',
+      source: 'ai',
+      status: 'reviewing',
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: 'mx_hot_bazi',
+    });
+    const scheduler = new PublishScheduler(db);
+    const port = 51888;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+
+    const createResponse = await fetch(`http://127.0.0.1:${port}/hot-bazi-tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contentId: content.id,
+        accountId: account.id,
+        platform: 'weibo',
+        hotPersonId: person.id,
+        sourceTopic: '接口测试热点',
+        scheduledAt: '2026-05-05T12:00:00.000Z',
+        status: 'reviewing',
+        automationEnabled: true,
+        intervalMinutes: 60,
+        scheduleRuleJson: { rule: 'evening_peak' },
+        mediaPathsJson: ['C:/tmp/hot-bazi.png'],
+        platformPayload: { content: '接口热点八字正文' },
+      }),
+    });
+    const created = await createResponse.json() as { id: number; mediaPathsJson: string[]; automationEnabled: boolean };
+    const listResponse = await fetch(`http://127.0.0.1:${port}/hot-bazi-tasks`);
+    const list = await listResponse.json() as Array<{ id: number; hotPersonId: number; mediaPathsJson: string[] }>;
+
+    expect(createResponse.status).toBe(200);
+    expect(created).toMatchObject({
+      automationEnabled: true,
+      mediaPathsJson: ['C:/tmp/hot-bazi.png'],
+    });
+    expect(list).toContainEqual(expect.objectContaining({
+      id: created.id,
+      hotPersonId: person.id,
+      mediaPathsJson: ['C:/tmp/hot-bazi.png'],
+    }));
+  });
+
   test('exposes publish runs through the local api', async () => {
     const db = await createDatabase(':memory:');
     const account = db.accounts.create({
@@ -1612,5 +1792,59 @@ describe('http api', () => {
     expect(docs.userGuide).toContain('0Worker Desk User Guide');
     expect(docs.updateGuide).toContain('GitHub Releases');
     expect(docs.releaseNotes).toContain('0Worker Desk 0.1.0');
+  });
+
+  test('analyzes pending hot topics into local hot people records through the local api', async () => {
+    const db = await createDatabase(':memory:');
+    db.hotTopicsHistory.saveMany([
+      {
+        platform: '微博',
+        title: '何炅回应近期综艺争议',
+        rank: 1,
+        hotValue: '100w',
+      },
+      {
+        platform: '微博',
+        title: '谢娜节目表现引发讨论',
+        rank: 2,
+        hotValue: '90w',
+      },
+    ]);
+    const scheduler = new PublishScheduler(db);
+    const port = 51884;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/ai/hot-people/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        limit: 10,
+        provider: 'mock',
+      }),
+    });
+    const result = await response.json() as {
+      selectedTopics: number;
+      processedTopics: number;
+      skippedTopics: number;
+      createdCount: number;
+      updatedCount: number;
+      items: Array<{ name: string; sourceTopicTitle: string }>;
+    };
+    const listResponse = await fetch(`http://127.0.0.1:${port}/ai/hot-people`);
+    const listed = await listResponse.json() as Array<{ name: string; sourceTopicTitle: string }>;
+
+    expect(response.status).toBe(200);
+    expect(result.selectedTopics).toBe(2);
+    expect(result.processedTopics).toBe(2);
+    expect(result.skippedTopics).toBe(0);
+    expect(result.items.length).toBeGreaterThan(0);
+    expect(listResponse.status).toBe(200);
+    expect(listed).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: expect.any(String),
+        sourceTopicTitle: expect.any(String),
+      }),
+    ]));
   });
 });

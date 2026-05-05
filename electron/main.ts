@@ -7,7 +7,7 @@ import { initializeWorkflowEngine } from '../src/main/core/workflow/EngineRegist
 import { registerIpcHandlers, startHttpApi } from '../src/main/ipc/handlers.js';
 import { PublishScheduler } from '../src/main/publisher/Scheduler.js';
 
-const { app, BrowserWindow } = electron;
+const { app, BrowserWindow, shell } = electron;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 async function createWindow() {
@@ -35,6 +35,11 @@ async function createWindow() {
   } else {
     await window.loadFile(path.join(__dirname, '../../dist/index.html'));
   }
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: 'deny' };
+  });
 }
 
 app.whenReady().then(createWindow);

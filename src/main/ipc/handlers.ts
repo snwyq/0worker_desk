@@ -1,6 +1,6 @@
 import electron from 'electron';
 import http from 'node:http';
-import type { ConnectionTestResult, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput } from '../../shared/types.js';
+import type { AnalyzeHotPeopleInput, ConnectionTestResult, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, GenerateHotBaziBatchInput, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput } from '../../shared/types.js';
 import { fetchAdsPowerProfiles, startAdsPowerBrowser } from '../browser/AdsPowerApi.js';
 import { createConnectorForAccount } from '../browser/BrowserConnectorFactory.js';
 import { inspectFirstPage } from '../browser/RawCdpClient.js';
@@ -15,6 +15,8 @@ import { WeiboPublisher } from '../publisher/WeiboPublisher.js';
 import { listPlatformCapabilities } from '../platforms/registry.js';
 import { checkForUpdates, readUpdateConfig } from '../updater/UpdateService.js';
 import { AiService, aiService, type AiGenerateOptions, type AiImageOptions } from '../services/AiService.js';
+import { hotBaziService } from '../services/HotBaziService.js';
+import { hotPeopleService } from '../services/HotPeopleService.js';
 import { getWorkflowEngine } from '../core/workflow/EngineRegistry.js';
 import { createWorkflowRunner } from '../core/workflow/EngineRegistry.js';
 import { ImageGenTool } from '../core/tools/ImageGenTool.js';
@@ -324,6 +326,8 @@ function relaunchApp() {
 
 export function registerIpcHandlers(repositories: AppDatabase, scheduler: PublishScheduler) {
   aiService.init(repositories);
+  hotPeopleService.init(repositories);
+  hotBaziService.init(repositories);
   ipcMain.handle('app:relaunch', () => relaunchApp());
 
   ipcMain.handle('accounts:list', () => repositories.accounts.list());
@@ -370,6 +374,13 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   ipcMain.handle('distributionTasks:returnToReview', (_event, id: number, comment?: string) => (
     repositories.distributionTasks.returnToReview(id, comment ?? 'Returned to review')
   ));
+  ipcMain.handle('hotBaziTasks:list', () => repositories.hotBaziTasks.list());
+  ipcMain.handle('hotBaziTasks:create', (_event, input: CreateHotBaziTaskInput) => repositories.hotBaziTasks.create(input));
+  ipcMain.handle('hotBaziTasks:update', (_event, id: number, input: UpdateHotBaziTaskInput) => repositories.hotBaziTasks.update(id, input));
+  ipcMain.handle('hotBaziTasks:delete', (_event, id: number) => ({ ok: repositories.hotBaziTasks.delete(id) }));
+  ipcMain.handle('hotBaziTasks:deleteMany', (_event, ids: number[]) => ({ deleted: repositories.hotBaziTasks.deleteMany(ids) }));
+  ipcMain.handle('hotBaziTasks:enqueue', (_event, id: number) => repositories.hotBaziTasks.enqueueToDistribution(id));
+  ipcMain.handle('hotBaziTasks:enqueueMany', (_event, ids: number[]) => repositories.hotBaziTasks.enqueueManyToDistribution(ids));
   ipcMain.handle('platformCapabilities:list', () => listPlatformCapabilities());
   ipcMain.handle('publishRuns:list', (_event, taskId?: number) => (
     taskId ? repositories.publishRuns.listByTask(taskId) : repositories.publishRuns.list()
@@ -404,6 +415,17 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
     return handlePreviewWorkflow(event, repositories, pluginCode, workflowCode, inputParams);
   });
   ipcMain.handle('ai:listHotTopics', (_event, force: boolean) => aiService.fetchHotTopics(force));
+  ipcMain.handle('ai:deleteAllHotTopics', () => ({ deleted: repositories.hotTopicsHistory.deleteAll() }));
+  ipcMain.handle('ai:listHotPeople', () => hotPeopleService.list());
+  ipcMain.handle('ai:getHotPeopleQueueSummary', () => repositories.hotTopicAnalysis.getQueueSummary());
+  ipcMain.handle('ai:getHotPeopleAnalyzeProgress', () => hotPeopleService.getAnalyzeProgress());
+  ipcMain.handle('ai:deleteAllHotPeople', () => ({ deleted: repositories.hotPeople.deleteAll() }));
+  ipcMain.handle('ai:resetHotPeopleAnalysis', () => ({
+    deleted: repositories.hotPeople.deleteToday(),
+    reset: repositories.hotTopicAnalysis.resetToday(),
+  }));
+  ipcMain.handle('ai:analyzeHotPeople', (_event, input?: AnalyzeHotPeopleInput) => hotPeopleService.analyzePendingHotTopics(input));
+  ipcMain.handle('ai:generateHotBaziBatch', (_event, input: GenerateHotBaziBatchInput) => hotBaziService.generateBatch(input));
   ipcMain.handle('ai:startAgentSchedule', async (_event, accountId: number) => {
     // In production, this would register a node-cron job or an interval.
     return { ok: true, message: `Scheduled agent for account ${accountId}` };
@@ -584,6 +606,8 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
   currentHttpRepositories = repositories;
   const httpAiService = new AiService();
   httpAiService.init(repositories);
+  hotPeopleService.init(repositories);
+  hotBaziService.init(repositories);
   const server = http.createServer(async (request, response) => {
     try {
       if (request.method === 'OPTIONS') {
@@ -699,6 +723,47 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
 
       if (request.method === 'GET' && request.url === '/distribution-tasks') {
         sendJson(request, response, 200, repositories.distributionTasks.list());
+        return;
+      }
+
+      if (request.method === 'GET' && request.url === '/hot-bazi-tasks') {
+        sendJson(request, response, 200, repositories.hotBaziTasks.list());
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/hot-bazi-tasks') {
+        const input = await readBody(request) as CreateHotBaziTaskInput;
+        sendJson(request, response, 200, repositories.hotBaziTasks.create(input));
+        return;
+      }
+
+      const hotBaziTaskMatch = request.url?.match(/^\/hot-bazi-tasks\/(\d+)$/);
+      if (request.method === 'PATCH' && hotBaziTaskMatch) {
+        const input = await readBody(request) as UpdateHotBaziTaskInput;
+        sendJson(request, response, 200, repositories.hotBaziTasks.update(Number(hotBaziTaskMatch[1]), input));
+        return;
+      }
+
+      if (request.method === 'DELETE' && hotBaziTaskMatch) {
+        sendJson(request, response, 200, { ok: repositories.hotBaziTasks.delete(Number(hotBaziTaskMatch[1])) });
+        return;
+      }
+
+      const hotBaziEnqueueMatch = request.url?.match(/^\/hot-bazi-tasks\/(\d+)\/enqueue$/);
+      if (request.method === 'POST' && hotBaziEnqueueMatch) {
+        sendJson(request, response, 200, repositories.hotBaziTasks.enqueueToDistribution(Number(hotBaziEnqueueMatch[1])));
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/hot-bazi-tasks/delete-many') {
+        const input = await readBody(request) as { ids: number[] };
+        sendJson(request, response, 200, { deleted: repositories.hotBaziTasks.deleteMany(input.ids) });
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/hot-bazi-tasks/enqueue-many') {
+        const input = await readBody(request) as { ids: number[] };
+        sendJson(request, response, 200, repositories.hotBaziTasks.enqueueManyToDistribution(input.ids));
         return;
       }
 
@@ -906,6 +971,56 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
 
       if (request.method === 'GET' && requestUrl.pathname === '/ai/hot-topics') {
         sendJson(request, response, 200, await httpAiService.fetchHotTopics(requestUrl.searchParams.get('force') === 'true'));
+        return;
+      }
+
+      if (request.method === 'GET' && requestUrl.pathname === '/ai/hot-people') {
+        sendJson(request, response, 200, hotPeopleService.list());
+        return;
+      }
+
+      if (request.method === 'GET' && requestUrl.pathname === '/ai/hot-people-queue-summary') {
+        sendJson(request, response, 200, repositories.hotTopicAnalysis.getQueueSummary());
+        return;
+      }
+
+      if (request.method === 'GET' && requestUrl.pathname === '/ai/hot-people-analyze-progress') {
+        sendJson(request, response, 200, hotPeopleService.getAnalyzeProgress());
+        return;
+      }
+
+      if (request.method === 'GET' && requestUrl.pathname === '/ai/hot-people-failed') {
+        sendJson(request, response, 200, repositories.hotTopicAnalysis.listFailed());
+        return;
+      }
+
+      if (request.method === 'DELETE' && requestUrl.pathname === '/ai/hot-people') {
+        sendJson(request, response, 200, { deleted: repositories.hotPeople.deleteAll() });
+        return;
+      }
+
+      if (request.method === 'DELETE' && requestUrl.pathname === '/ai/hot-topics') {
+        sendJson(request, response, 200, { deleted: repositories.hotTopicsHistory.deleteAll() });
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/ai/hot-people/reset-analysis') {
+        sendJson(request, response, 200, {
+          deleted: repositories.hotPeople.deleteToday(),
+          reset: repositories.hotTopicAnalysis.resetToday(),
+        });
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/ai/hot-people/analyze') {
+        const input = await readBody(request) as AnalyzeHotPeopleInput;
+        sendJson(request, response, 200, await hotPeopleService.analyzePendingHotTopics(input));
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/ai/hot-bazi/generate-batch') {
+        const input = await readBody(request) as GenerateHotBaziBatchInput;
+        sendJson(request, response, 200, await hotBaziService.generateBatch(input));
         return;
       }
 

@@ -14,10 +14,16 @@ describe('database repositories', () => {
     const first = await createDatabase(filename);
 
     first.settings.set('scheduler.intervalMs', '60000');
+    first.hotTopicsHistory.saveMany([
+      { platform: '微博', title: '持久化热点', rank: 1, hotValue: '10w' },
+    ]);
 
     const second = await createDatabase(filename);
 
     expect(second.settings.get('scheduler.intervalMs')).toBe('60000');
+    expect(second.hotTopicsHistory.getLatest()).toEqual([
+      expect.objectContaining({ title: '持久化热点' }),
+    ]);
   });
 
   test('seeds enterprise defaults for platforms and settings', async () => {
@@ -1416,5 +1422,274 @@ describe('database repositories', () => {
     expect(db.posts.delete(post.id)).toBe(true);
     expect(db.posts.findById(post.id)).toBeNull();
     expect(db.posts.list()).toHaveLength(0);
+  });
+
+  test('stores and refreshes hot people records in the local database', async () => {
+    const db = await createDatabase(':memory:');
+
+    const created = db.hotPeople.upsert({
+      name: '何炅',
+      gender: '男',
+      birthday: '1974年4月28日',
+      bio: '何炅，中国顶级电视综艺主持人。1998年起主持湖南卫视《快乐大本营》长达二十余年，奠定其国民MC地位。',
+      constellation: '金牛座',
+      sizhu: '甲寅 戊辰 丙子',
+      dayunInfo: '8岁起运，顺行大运。',
+      photoUrl: 'https://example.com/hejiong.jpg',
+      promptText: '中国知名综艺主持人，代表作《快乐大本营》，主持风格亲和稳定。',
+      sourceTopicTitle: '何炅回应近期综艺话题',
+      sourcePlatform: '微博',
+      analysisStatus: 'completed',
+    });
+
+    const refreshed = db.hotPeople.upsert({
+      name: '何炅',
+      gender: '男',
+      birthday: '1974年4月28日',
+      bio: '何炅，中国电视综艺主持人、教师、演员。长期主持国民综艺节目，兼具稳定控场和大众影响力。',
+      constellation: '金牛座',
+      sizhu: '甲寅 戊辰 丙子',
+      dayunInfo: '8岁起运，顺行大运。',
+      photoUrl: 'https://example.com/hejiong-v2.jpg',
+      promptText: '何炅，主持人、教师、演员，国民级综艺MC。',
+      sourceTopicTitle: '何炅综艺发言再上热搜',
+      sourcePlatform: '微博',
+      analysisStatus: 'completed',
+    });
+
+    const listed = db.hotPeople.list();
+    const found = db.hotPeople.findByName('何炅');
+
+    expect(created.name).toBe('何炅');
+    expect(refreshed.id).toBe(created.id);
+    expect(listed).toHaveLength(1);
+    expect(found).toMatchObject({
+      id: created.id,
+      name: '何炅',
+      bio: '何炅，中国电视综艺主持人、教师、演员。长期主持国民综艺节目，兼具稳定控场和大众影响力。',
+      photoUrl: 'https://example.com/hejiong-v2.jpg',
+      sourceTopicTitle: '何炅综艺发言再上热搜',
+      analysisStatus: 'completed',
+    });
+  });
+
+  test('does not duplicate completed hot people when the same person appears in later topics', async () => {
+    const db = await createDatabase(':memory:');
+
+    db.hotPeople.upsert({
+      name: '何炅',
+      gender: '男',
+      birthday: '1974年4月28日',
+      bio: '何炅，中国电视综艺主持人、教师、演员。长期主持国民综艺节目，兼具稳定控场和大众影响力。',
+      constellation: '金牛座',
+      sizhu: '甲寅 戊辰 丙子',
+      dayunInfo: '甲子(1982-1991,8-17岁)',
+      photoUrl: 'https://example.com/hejiong.jpg',
+      promptText: '何炅，主持人、教师、演员，国民级综艺MC。',
+      sourceTopicTitle: '何炅回应近期综艺话题',
+      sourcePlatform: '微博',
+      analysisStatus: 'completed',
+    });
+
+    const reused = db.hotPeople.findByName('何炅');
+
+    expect(reused).toMatchObject({
+      name: '何炅',
+      birthday: '1974年4月28日',
+      analysisStatus: 'completed',
+    });
+    expect(db.hotPeople.list().filter((item) => item.name === '何炅')).toHaveLength(1);
+  });
+
+  test('tracks hot topic analysis state so processed topic rows can be skipped later', async () => {
+    const db = await createDatabase(':memory:');
+    db.hotTopicsHistory.saveMany([
+      { platform: '微博', title: '何炅回应近期综艺争议', rank: 1, hotValue: '100w' },
+      { platform: '微博', title: '谢娜节目表现引发讨论', rank: 2, hotValue: '90w' },
+    ]);
+
+    const latest = db.hotTopicsHistory.getLatest(10);
+    expect(latest).toHaveLength(2);
+
+    const pendingBefore = db.hotTopicAnalysis.listPending(10);
+    expect(pendingBefore).toHaveLength(2);
+
+    db.hotTopicAnalysis.markProcessed(latest[0].id, ['何炅']);
+
+    const pendingAfter = db.hotTopicAnalysis.listPending(10);
+    expect(pendingAfter).toHaveLength(1);
+    expect(pendingAfter[0].title).toBe('谢娜节目表现引发讨论');
+  });
+
+  test('returns newest pending hot topics first so fresh batches are analyzed before stale queue heads', async () => {
+    const db = await createDatabase(':memory:');
+    db.hotTopicsHistory.saveMany([
+      { platform: 'weibo', title: 'older topic', rank: 1, hotValue: '100w' },
+      { platform: 'weibo', title: 'newer topic', rank: 2, hotValue: '90w' },
+      { platform: 'weibo', title: 'newest topic', rank: 3, hotValue: '80w' },
+    ]);
+
+    const pending = db.hotTopicAnalysis.listPending(3);
+
+    expect(pending.map((item) => item.title)).toEqual(['newest topic', 'newer topic', 'older topic']);
+  });
+
+  test('stores only newly appeared hot topics when incremental sync compares against the latest snapshot', async () => {
+    const db = await createDatabase(':memory:');
+    db.hotTopicsHistory.saveMany([
+      { platform: 'weibo', title: 'kept topic', url: 'https://example.com/kept', rank: 1, hotValue: '100w' },
+      { platform: 'tencent', title: 'old topic', url: 'https://example.com/old', rank: 2, hotValue: '90w' },
+    ]);
+
+    const inserted = db.hotTopicsHistory.saveIncremental([
+      { platform: 'weibo', title: 'kept topic', url: 'https://example.com/kept', rank: 1, hotValue: '120w' },
+      { platform: 'tencent', title: 'brand new topic', url: 'https://example.com/new', rank: 2, hotValue: '88w' },
+    ]);
+
+    const latest = db.hotTopicsHistory.getLatest(10);
+
+    expect(inserted).toBe(1);
+    expect(latest).toHaveLength(1);
+    expect(latest[0]).toMatchObject({
+      platform: 'tencent',
+      title: 'brand new topic',
+      url: 'https://example.com/new',
+    });
+  });
+
+  test('failed hot topic analysis stays retryable instead of being completed', async () => {
+    const db = await createDatabase(':memory:');
+    db.hotTopicsHistory.saveMany([
+      { platform: '微博', title: '未知人物资料不足', rank: 1, hotValue: '100w' },
+    ]);
+
+    const [pending] = db.hotTopicAnalysis.listPending(10);
+    db.hotTopicAnalysis.markExtracted(pending.id, ['未知人物']);
+    db.hotTopicAnalysis.markFailed(pending.id, 'BIRTHDAY_YMD_REQUIRED');
+
+    const [retryable] = db.hotTopicAnalysis.listPending(10);
+    expect(retryable).toBeUndefined();
+  });
+
+  test('stores and updates public figure evidence cache by person name', async () => {
+    const db = await createDatabase(':memory:');
+
+    const first = db.publicFigureEvidence.upsert({
+      name: '何炅',
+      title: '何炅',
+      summary: '何炅，中国电视综艺主持人、教师、演员。',
+      imageUrl: 'https://example.com/hejiong.jpg',
+      birthDate: '1974年4月28日',
+      gender: '男',
+      source: 'wikipedia',
+    });
+
+    const second = db.publicFigureEvidence.upsert({
+      name: '何炅',
+      title: '何炅',
+      summary: '何炅，中国知名主持人、演员，长期主持国民综艺。',
+      imageUrl: 'https://example.com/hejiong-v2.jpg',
+      birthDate: '1974年4月28日',
+      gender: '男',
+      source: 'wikidata',
+    });
+
+    const found = db.publicFigureEvidence.findByName('何炅');
+
+    expect(second.id).toBe(first.id);
+    expect(found).toMatchObject({
+      id: first.id,
+      name: '何炅',
+      summary: '何炅，中国知名主持人、演员，长期主持国民综艺。',
+      imageUrl: 'https://example.com/hejiong-v2.jpg',
+      source: 'wikidata',
+    });
+  });
+
+  test('deletes all hot people records for full regeneration', async () => {
+    const db = await createDatabase(':memory:');
+
+    db.hotPeople.upsert({
+      name: '何炅',
+      gender: '男',
+      birthday: '1974年4月28日',
+      bio: '何炅，中国知名主持人。',
+      constellation: '金牛座',
+      sizhu: '甲寅 戊辰 丙子',
+      dayunInfo: '1978-1987年（8-17岁）：癸巳',
+      photoUrl: '',
+      promptText: '何炅，主持人。',
+      sourceTopicTitle: '何炅热搜',
+      sourcePlatform: '微博',
+      analysisStatus: 'completed',
+    });
+
+    expect(db.hotPeople.list()).toHaveLength(1);
+    expect(db.hotPeople.deleteAll()).toBe(1);
+    expect(db.hotPeople.list()).toHaveLength(0);
+  });
+
+  test('stores hot bazi tasks with media paths and automation config', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'hot bazi account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+    });
+    const person = db.hotPeople.upsert({
+      name: '测试人物',
+      birthday: '1990年1月1日',
+      sourceTopicTitle: '测试热点',
+      sourcePlatform: 'weibo',
+      analysisStatus: 'completed',
+    });
+    const content = db.contentItems.create({
+      title: '热点八字内容',
+      body: '一条热点八字微博草稿',
+      source: 'ai',
+      status: 'reviewing',
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: 'mx_hot_bazi',
+      mediaJson: [{ path: 'C:/tmp/a.png' }],
+      sourceJson: { sourceTopic: '测试热点' },
+    });
+
+    const task = db.hotBaziTasks.create({
+      contentId: content.id,
+      accountId: account.id,
+      platform: 'weibo',
+      hotPersonId: person.id,
+      sourceTopic: '测试热点',
+      scheduledAt: '2026-05-05T10:00:00.000Z',
+      status: 'reviewing',
+      automationEnabled: true,
+      intervalMinutes: 90,
+      scheduleRuleJson: { mode: 'evening_peak' },
+      mediaPathsJson: ['C:/tmp/a.png', 'C:/tmp/b.mp4'],
+      platformPayload: { content: '一条热点八字微博草稿' },
+    });
+
+    expect(task).toMatchObject({
+      contentId: content.id,
+      accountId: account.id,
+      hotPersonId: person.id,
+      sourceTopic: '测试热点',
+      status: 'reviewing',
+      automationEnabled: true,
+      intervalMinutes: 90,
+      mediaPathsJson: ['C:/tmp/a.png', 'C:/tmp/b.mp4'],
+      scheduleRuleJson: { mode: 'evening_peak' },
+    });
+    expect(db.hotBaziTasks.list()).toContainEqual(expect.objectContaining({
+      id: task.id,
+      accountId: account.id,
+      mediaPathsJson: ['C:/tmp/a.png', 'C:/tmp/b.mp4'],
+    }));
   });
 });

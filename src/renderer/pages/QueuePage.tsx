@@ -1,4 +1,4 @@
-﻿import { Fragment, useEffect, useState, useRef } from 'react';
+import { Fragment, useEffect, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { 
   Plus, 
