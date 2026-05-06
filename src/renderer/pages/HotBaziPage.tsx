@@ -1,14 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, ImagePlus, Pencil, Settings2, Sparkles, Trash2 } from 'lucide-react';
+﻿import { useEffect, useMemo, useState } from 'react';
+import { CalendarClock, Copy, Pencil, Send, Settings2, Sparkles, Trash2 } from 'lucide-react';
 import { appApi } from '../api';
 import type { Account, HotBaziTask, HotPerson } from '../../shared/types';
-
-const scheduleOptions = [
-  { value: 'morning', label: '早高峰' },
-  { value: 'noon', label: '午间' },
-  { value: 'evening_peak', label: '晚高峰' },
-  { value: 'night', label: '夜间' },
-];
 
 const batchSizeOptions = [
   { value: '2', label: '2 条' },
@@ -61,14 +54,9 @@ export function HotBaziPage() {
   const [showPromptModal, setShowPromptModal] = useState(false);
 
   const [accountId, setAccountId] = useState('');
-  const [scheduleRule, setScheduleRule] = useState('evening_peak');
   const [model, setModel] = useState<'qwen3.5-plus' | 'deepseek-v3.2' | 'kimi-k2.5'>('deepseek-v3.2');
-  const [automationEnabled, setAutomationEnabled] = useState(false);
-  const [intervalMinutes, setIntervalMinutes] = useState('90');
   const [batchSize, setBatchSize] = useState('2');
-  const [requireReview, setRequireReview] = useState(true);
   const [promptTemplate, setPromptTemplate] = useState(defaultPromptTemplate);
-  const [mediaPaths, setMediaPaths] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -109,21 +97,15 @@ export function HotBaziPage() {
   }, [hotPeople]);
 
   const allSelected = tasks.length > 0 && selectedTaskIds.length === tasks.length;
+  const actionButtonClass = 'tw-inline-flex tw-h-9 tw-w-[120px] tw-items-center tw-justify-center tw-gap-1.5 tw-rounded-lg tw-border tw-px-3 tw-text-xs tw-font-bold tw-transition-colors';
+  const actionButtonNeutralClass = `${actionButtonClass} tw-border-slate-200 tw-bg-white tw-text-slate-700 hover:tw-bg-slate-50`;
+  const actionButtonPrimaryClass = `${actionButtonClass} tw-border-slate-900 tw-bg-slate-900 tw-text-white hover:tw-bg-slate-800`;
+  const actionButtonDangerClass = `${actionButtonClass} tw-border-red-200 tw-bg-red-50 tw-text-red-600 hover:tw-bg-red-100`;
 
   const taskContentPreview = (task: HotBaziTask) => {
     const payloadContent = typeof task.platformPayload?.content === 'string' ? task.platformPayload.content.trim() : '';
     return payloadContent;
   };
-
-  const scheduleRuleLabel = (task: HotBaziTask) => {
-    const rule = typeof task.scheduleRuleJson?.rule === 'string' ? task.scheduleRuleJson.rule : '';
-    return rule || '未设置';
-  };
-
-  async function pickMedia() {
-    const files = await appApi.media.selectFiles();
-    setMediaPaths((current) => [...new Set([...current, ...files])]);
-  }
 
   function toggleTaskSelection(id: number) {
     setSelectedTaskIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
@@ -187,16 +169,11 @@ export function HotBaziPage() {
     try {
       const result = await appApi.ai.generateHotBaziBatch({
         accountId: Number(accountId),
-        scheduleRule,
         model,
-        automationEnabled,
-        intervalMinutes: Number(intervalMinutes || 90),
         limit: batchSize === 'all' ? todayCompletedHotPeopleCount : Number(batchSize),
-        requireReview,
-        mediaPaths,
         promptTemplate,
       });
-      setNotice(`已生成 ${result.createdContents} 条内容，写入审核 ${result.createdReviews} 条，写入热点八字任务 ${result.createdTasks} 条。`);
+      setNotice(`已生成 ${result.createdContents} 条内容，写入热点八字任务 ${result.createdTasks} 条。`);
       if (result.errors.length > 0) setError(result.errors.join('；'));
       await load();
     } catch (cause) {
@@ -206,7 +183,7 @@ export function HotBaziPage() {
     }
   }
 
-  const summaryLine = `账号：${currentAccountName} | 规律：${scheduleOptions.find((item) => item.value === scheduleRule)?.label || scheduleRule} | 模型：${model} | 间隔：${intervalMinutes} 分钟 | 数量：${batchSize === 'all' ? '全部' : `${batchSize} 条`} | 审核：${requireReview ? '先入审核池' : '直接生成任务'} | 媒体：${mediaPaths.length > 0 ? `${mediaPaths.length} 个` : '未绑定'}`;
+  const summaryLine = `账号：${currentAccountName} | 模型：${model} | 数量：${batchSize === 'all' ? '全部' : `${batchSize} 条`} | 结果：只生成内容，不在本页排发布时间`;
 
   return (
     <div className="tw-min-h-screen tw-pb-20 tw-animate-fade-in">
@@ -216,7 +193,7 @@ export function HotBaziPage() {
         </div>
         <div>
           <h1 className="tw-text-3xl tw-font-extrabold tw-text-slate-900">热点八字</h1>
-          <p className="tw-mt-1 tw-text-sm tw-text-slate-500">从今日热点人物逐条生成内容，进入审核与热点八字任务表。</p>
+          <p className="tw-mt-1 tw-text-sm tw-text-slate-500">从今日热点人物逐条生成内容；发布时间统一在发布调度里设置。</p>
         </div>
       </div>
 
@@ -250,18 +227,13 @@ export function HotBaziPage() {
         </section>
 
         <section className="tw-rounded-[1.5rem] tw-border tw-border-slate-200 tw-bg-white tw-p-5 tw-shadow-sm">
-          <div className="tw-mb-4 tw-flex tw-items-center tw-justify-between">
-            <h2 className="tw-text-lg tw-font-black tw-text-slate-900">热点八字任务</h2>
-            <span className="tw-text-sm tw-font-bold tw-text-slate-500">{tasks.length} 条</span>
-          </div>
-
           <div className="tw-mb-4 tw-flex tw-flex-wrap tw-items-center tw-gap-3">
             <label className="tw-inline-flex tw-items-center tw-gap-2 tw-text-sm tw-font-bold tw-text-slate-700">
               <input type="checkbox" checked={allSelected} onChange={toggleAllSelection} />
               全选
             </label>
             <button type="button" onClick={() => void handleBatchEnqueue()} disabled={selectedTaskIds.length === 0} className="tw-rounded-xl tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-xs tw-font-black tw-text-white disabled:tw-bg-slate-300">
-              进入调度池
+              送调度
             </button>
             <button type="button" onClick={() => void handleBatchDelete()} disabled={selectedTaskIds.length === 0} className="tw-rounded-xl tw-bg-red-50 tw-px-4 tw-py-2 tw-text-xs tw-font-black tw-text-red-600 tw-border tw-border-red-200 disabled:tw-opacity-50">
               批量删除
@@ -279,8 +251,7 @@ export function HotBaziPage() {
                     <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">序号</th>
                     <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">热点标题</th>
                     <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">账号</th>
-                    <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">综合信息</th>
-                    <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">计划时间</th>
+                    <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">状态</th>
                     <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">内容</th>
                     <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">操作</th>
                   </tr>
@@ -294,20 +265,14 @@ export function HotBaziPage() {
                       <td className="tw-whitespace-nowrap tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-font-bold tw-text-slate-500">{index + 1}</td>
                       <td className="tw-whitespace-nowrap tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-font-bold tw-text-slate-800">{task.sourceTopic || '未标记来源热点'}</td>
                       <td className="tw-whitespace-nowrap tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-text-slate-600">{accountNameById.get(task.accountId) || task.accountId}</td>
-                      <td className="tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-text-slate-600">
-                        <div className="tw-whitespace-nowrap">状态：{task.status}</div>
-                        <div className="tw-whitespace-nowrap">规律：{scheduleRuleLabel(task)}</div>
-                        <div className="tw-whitespace-nowrap">间隔：{task.intervalMinutes} 分钟</div>
-                        <div className="tw-whitespace-nowrap">自动化：{task.automationEnabled ? '开启' : '关闭'}</div>
-                      </td>
-                      <td className="tw-whitespace-nowrap tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-text-slate-600">{new Date(task.scheduledAt).toLocaleString()}</td>
+                      <td className="tw-whitespace-nowrap tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-font-bold tw-text-slate-600">{task.status === 'queued' ? '已送到发布调度' : '待送调度'}</td>
                       <td className="tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-text-slate-700">
                         {editingTaskId === task.id ? (
                           <div className="tw-space-y-3">
                             <textarea value={editingContent} onChange={(event) => setEditingContent(event.target.value)} rows={8} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-white tw-p-3 tw-text-sm tw-outline-none" />
                             <div className="tw-flex tw-gap-2">
-                              <button type="button" onClick={() => void saveEdit(task)} className="tw-rounded-lg tw-bg-slate-900 tw-px-3 tw-py-2 tw-text-xs tw-font-bold tw-text-white">保存</button>
-                              <button type="button" onClick={() => setEditingTaskId(null)} className="tw-rounded-lg tw-bg-white tw-px-3 tw-py-2 tw-text-xs tw-font-bold tw-text-slate-600 tw-border tw-border-slate-200">取消</button>
+                              <button type="button" onClick={() => void saveEdit(task)} className={actionButtonPrimaryClass}>保存</button>
+                              <button type="button" onClick={() => setEditingTaskId(null)} className={actionButtonNeutralClass}>取消</button>
                             </div>
                           </div>
                         ) : (
@@ -335,16 +300,21 @@ export function HotBaziPage() {
                       </td>
                       <td className="tw-px-3 tw-py-4 tw-align-top">
                         <div className="tw-flex tw-flex-col tw-gap-2">
-                          <button type="button" onClick={() => startEdit(task)} className="tw-inline-flex tw-items-center tw-gap-1 tw-whitespace-nowrap tw-rounded-lg tw-bg-white tw-px-3 tw-py-2 tw-text-xs tw-font-bold tw-text-slate-700 tw-border tw-border-slate-200">
+                          <button type="button" onClick={() => startEdit(task)} className={actionButtonNeutralClass}>
                             <Pencil size={12} />
-                            编辑
+                            <span>编辑</span>
                           </button>
-                          <button type="button" onClick={() => void appApi.hotBaziTasks.enqueue(task.id).then(() => setNotice('已送入调度池。')).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))} className="tw-whitespace-nowrap tw-rounded-lg tw-bg-slate-900 tw-px-3 tw-py-2 tw-text-xs tw-font-bold tw-text-white">
-                            入调度池
+                          <button type="button" onClick={() => void appApi.hotBaziTasks.enqueue(task.id).then(() => setNotice('已送入调度池。')).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))} className={actionButtonPrimaryClass}>
+                            <Send size={12} />
+                            <span>送调度</span>
                           </button>
-                          <button type="button" onClick={() => void appApi.hotBaziTasks.delete(task.id).then(() => { setNotice('已删除任务。'); return load(); }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))} className="tw-inline-flex tw-items-center tw-gap-1 tw-whitespace-nowrap tw-rounded-lg tw-bg-red-50 tw-px-3 tw-py-2 tw-text-xs tw-font-bold tw-text-red-600 tw-border tw-border-red-200">
+                          <button type="button" onClick={() => void navigator.clipboard.writeText(taskContentPreview(task) || '').then(() => setNotice('已复制热点八字内容。')).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))} className={actionButtonNeutralClass}>
+                            <Copy size={12} />
+                            <span>复制</span>
+                          </button>
+                          <button type="button" onClick={() => void appApi.hotBaziTasks.delete(task.id).then(() => { setNotice('已删除任务。'); return load(); }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))} className={actionButtonDangerClass}>
                             <Trash2 size={12} />
-                            删除
+                            <span>删除</span>
                           </button>
                         </div>
                       </td>
@@ -372,12 +342,6 @@ export function HotBaziPage() {
                 </select>
               </label>
               <label className="tw-block">
-                <div className="tw-mb-2 tw-text-sm tw-font-bold tw-text-slate-700">发布时间规律</div>
-                <select value={scheduleRule} onChange={(event) => setScheduleRule(event.target.value)} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3 tw-text-sm">
-                  {scheduleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-              <label className="tw-block">
                 <div className="tw-mb-2 tw-text-sm tw-font-bold tw-text-slate-700">生成模型</div>
                 <select value={model} onChange={(event) => setModel(event.target.value as 'qwen3.5-plus' | 'deepseek-v3.2' | 'kimi-k2.5')} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3 tw-text-sm">
                   <option value="qwen3.5-plus">qwen3.5-plus</option>
@@ -386,47 +350,13 @@ export function HotBaziPage() {
                 </select>
               </label>
               <label className="tw-block">
-                <div className="tw-mb-2 tw-text-sm tw-font-bold tw-text-slate-700">自动化发布间隔时间</div>
-                <select value={intervalMinutes} onChange={(event) => setIntervalMinutes(event.target.value)} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3 tw-text-sm">
-                  <option value="30">30 分钟</option>
-                  <option value="60">60 分钟</option>
-                  <option value="90">90 分钟</option>
-                  <option value="120">120 分钟</option>
-                </select>
-              </label>
-              <label className="tw-block">
                 <div className="tw-mb-2 tw-text-sm tw-font-bold tw-text-slate-700">本次生成数量</div>
                 <select value={batchSize} onChange={(event) => setBatchSize(event.target.value)} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3 tw-text-sm">
                   {batchSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
               </label>
-              <label className="tw-flex tw-items-center tw-justify-between tw-rounded-2xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3">
-                <span className="tw-text-sm tw-font-bold tw-text-slate-700">自动化开关</span>
-                <input type="checkbox" checked={automationEnabled} onChange={(event) => setAutomationEnabled(event.target.checked)} />
-              </label>
-              <label className="tw-flex tw-items-center tw-justify-between tw-rounded-2xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3">
-                <span className="tw-text-sm tw-font-bold tw-text-slate-700">默认先入审核池</span>
-                <input type="checkbox" checked={requireReview} onChange={(event) => setRequireReview(event.target.checked)} />
-              </label>
             </div>
 
-            <div className="tw-mt-5 tw-rounded-2xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-p-4">
-              <div className="tw-mb-3 tw-flex tw-items-center tw-justify-between">
-                <span className="tw-text-sm tw-font-bold tw-text-slate-700">媒体文件上传</span>
-                <button type="button" onClick={() => void pickMedia()} className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-xl tw-bg-white tw-px-3 tw-py-2 tw-text-xs tw-font-black tw-text-slate-700 tw-border tw-border-slate-200">
-                  <ImagePlus size={14} />
-                  选择文件
-                </button>
-              </div>
-              <div className="tw-space-y-2">
-                {mediaPaths.length === 0 ? <div className="tw-text-xs tw-text-slate-400">还没有绑定媒体文件</div> : mediaPaths.map((path) => (
-                  <div key={path} className="tw-flex tw-items-center tw-justify-between tw-gap-3 tw-rounded-xl tw-bg-white tw-px-3 tw-py-2 tw-text-xs tw-font-medium tw-text-slate-600 tw-border tw-border-slate-200">
-                    <span className="tw-truncate">{path}</span>
-                    <button type="button" onClick={() => setMediaPaths((current) => current.filter((item) => item !== path))} className="tw-text-red-500">删除</button>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         </div>
       )}
