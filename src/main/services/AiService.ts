@@ -17,7 +17,9 @@ export interface AiResponse {
 
 function safeLog(...args: unknown[]) {
   try {
-    console.log(...args);
+    if (typeof process !== 'undefined' && process.stdout && !process.stdout.destroyed && !process.stdout.writableEnded) {
+      console.log(...args);
+    }
   } catch {
     // Ignore broken stdout/stderr pipes in packaged Electron runs.
   }
@@ -25,7 +27,9 @@ function safeLog(...args: unknown[]) {
 
 function safeError(...args: unknown[]) {
   try {
-    console.error(...args);
+    if (typeof process !== 'undefined' && process.stderr && !process.stderr.destroyed && !process.stderr.writableEnded) {
+      console.error(...args);
+    }
   } catch {
     // Ignore broken stdout/stderr pipes in packaged Electron runs.
   }

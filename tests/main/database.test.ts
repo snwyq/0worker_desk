@@ -904,6 +904,54 @@ describe('database repositories', () => {
     });
   });
 
+  test('deletes distribution tasks together with linked publish runs and legacy posts', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'delete task account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+    });
+    const content = db.contentItems.create({
+      title: 'Delete me',
+      body: 'Delete task body',
+      source: 'manual',
+      status: 'ready',
+      accountId: account.id,
+    });
+    const task = db.distributionTasks.create({
+      contentId: content.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'Delete task body' },
+    });
+    const post = db.distributionTasks.ensureLegacyPost(task.id);
+    db.publishRuns.create({
+      taskId: task.id,
+      accountId: account.id,
+      platform: 'weibo',
+      status: 'failed',
+      message: 'Queued for delete test',
+      startedAt: '2026-05-01T10:00:00.000Z',
+      finishedAt: '2026-05-01T10:01:00.000Z',
+      screenshotPath: '',
+    });
+
+    expect(db.posts.findById(post.id)).toBeTruthy();
+    expect(db.publishRuns.listByTask(task.id)).toHaveLength(1);
+
+    expect(db.distributionTasks.delete(task.id)).toBe(true);
+    expect(db.distributionTasks.list()).toHaveLength(0);
+    expect(db.posts.findById(post.id)).toBeNull();
+    expect(db.publishRuns.listByTask(task.id)).toHaveLength(0);
+  });
+
   test('scheduler processes due distribution tasks and records manual action failures', async () => {
     const db = await createDatabase(':memory:');
     const account = db.accounts.create({
@@ -1119,6 +1167,79 @@ describe('database repositories', () => {
 
     expect(retried.map((task) => task.status)).toEqual(['queued', 'queued']);
     expect(cancelled.map((task) => task.lastError)).toEqual(['Cancelled by operator', 'Cancelled by operator']);
+  });
+
+  test('deletes tasks in bulk together with linked legacy posts and publish runs', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'bulk delete account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+    });
+    const firstContent = db.contentItems.create({
+      title: 'Bulk delete 1',
+      body: 'Bulk delete body 1',
+      source: 'manual',
+      status: 'ready',
+      accountId: account.id,
+    });
+    const secondContent = db.contentItems.create({
+      title: 'Bulk delete 2',
+      body: 'Bulk delete body 2',
+      source: 'manual',
+      status: 'ready',
+      accountId: account.id,
+    });
+    const first = db.distributionTasks.create({
+      contentId: firstContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'Bulk delete body 1' },
+    });
+    const second = db.distributionTasks.create({
+      contentId: secondContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T11:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'Bulk delete body 2' },
+    });
+    const firstPost = db.distributionTasks.ensureLegacyPost(first.id);
+    const secondPost = db.distributionTasks.ensureLegacyPost(second.id);
+    db.publishRuns.create({
+      taskId: first.id,
+      accountId: account.id,
+      platform: 'weibo',
+      status: 'failed',
+      message: 'Bulk delete first',
+      startedAt: '2026-05-01T10:00:00.000Z',
+      finishedAt: '2026-05-01T10:01:00.000Z',
+      screenshotPath: '',
+    });
+    db.publishRuns.create({
+      taskId: second.id,
+      accountId: account.id,
+      platform: 'weibo',
+      status: 'failed',
+      message: 'Bulk delete second',
+      startedAt: '2026-05-01T11:00:00.000Z',
+      finishedAt: '2026-05-01T11:01:00.000Z',
+      screenshotPath: '',
+    });
+
+    expect(db.distributionTasks.deleteMany([first.id, second.id])).toBe(2);
+    expect(db.distributionTasks.list()).toHaveLength(0);
+    expect(db.posts.findById(firstPost.id)).toBeNull();
+    expect(db.posts.findById(secondPost.id)).toBeNull();
+    expect(db.publishRuns.listByTask(first.id)).toHaveLength(0);
+    expect(db.publishRuns.listByTask(second.id)).toHaveLength(0);
   });
 
   test('updates and deletes content items', async () => {
@@ -1669,7 +1790,7 @@ describe('database repositories', () => {
       scheduledAt: '2026-05-05T10:00:00.000Z',
       status: 'reviewing',
       automationEnabled: true,
-      intervalMinutes: 90,
+      intervalMinutes: 5,
       scheduleRuleJson: { mode: 'evening_peak' },
       mediaPathsJson: ['C:/tmp/a.png', 'C:/tmp/b.mp4'],
       platformPayload: { content: '一条热点八字微博草稿' },
@@ -1682,7 +1803,7 @@ describe('database repositories', () => {
       sourceTopic: '测试热点',
       status: 'reviewing',
       automationEnabled: true,
-      intervalMinutes: 90,
+      intervalMinutes: 5,
       mediaPathsJson: ['C:/tmp/a.png', 'C:/tmp/b.mp4'],
       scheduleRuleJson: { mode: 'evening_peak' },
     });
@@ -1691,5 +1812,50 @@ describe('database repositories', () => {
       accountId: account.id,
       mediaPathsJson: ['C:/tmp/a.png', 'C:/tmp/b.mp4'],
     }));
+  });
+
+  test('uses the dispatch scheduler time when enqueueing hot bazi content', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'hot bazi enqueue account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+    });
+    const content = db.contentItems.create({
+      title: 'Hot bazi enqueue content',
+      body: 'Hot bazi enqueue body',
+      source: 'ai',
+      status: 'ready',
+      accountId: account.id,
+      pluginCode: 'maoxiaoxian',
+      styleId: 'mx_hot_bazi',
+    });
+    const task = db.hotBaziTasks.create({
+      contentId: content.id,
+      accountId: account.id,
+      platform: 'weibo',
+      sourceTopic: 'hot bazi source topic',
+      scheduledAt: '2026-05-05T12:34:00.000Z',
+      status: 'draft',
+      automationEnabled: false,
+      intervalMinutes: 5,
+      scheduleRuleJson: { rule: 'evening_peak' },
+      platformPayload: { content: 'Hot bazi enqueue body' },
+    });
+
+    const distributionTask = db.hotBaziTasks.enqueueToDistribution(task.id);
+
+    expect(distributionTask.scheduledAt).not.toBe('2026-05-05T12:34:00.000Z');
+    expect(db.distributionTasks.list()).toContainEqual(expect.objectContaining({
+      contentId: content.id,
+      scheduledAt: distributionTask.scheduledAt,
+      status: 'queued',
+    }));
+    expect(db.hotBaziTasks.findById(task.id)?.status).toBe('queued');
   });
 });

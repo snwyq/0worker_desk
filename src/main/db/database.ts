@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { schemaSql } from './schema.js';
+import { normalizePublishMediaPath } from '../../shared/mediaPaths.js';
 import type {
   Account,
   AiPlugin,
@@ -202,12 +203,13 @@ function mapPublishRun(row: Record<string, unknown>): PublishRun {
 function readMediaPathsFromTask(content: ContentItem, task: DistributionTask): string[] {
   const payloadMedia = task.platformPayload.mediaPaths;
   if (Array.isArray(payloadMedia)) {
-    return payloadMedia.map((item) => String(item)).filter(Boolean);
+    return payloadMedia.map(normalizePublishMediaPath).filter(Boolean);
   }
 
   return content.mediaJson
     .map((item) => item.path ?? item.url ?? item.filePath)
-    .filter((item): item is string => typeof item === 'string' && item.length > 0);
+    .map(normalizePublishMediaPath)
+    .filter(Boolean);
 }
 
 function mapAiPlugin(row: Record<string, unknown>): AiPlugin {
@@ -730,6 +732,61 @@ export async function createDatabase(filename: string) {
       : null;
   }
 
+  function randomInt(min: number, max: number): number {
+    const lower = Math.ceil(min);
+    const upper = Math.floor(max);
+    if (upper <= lower) {
+      return lower;
+    }
+    return Math.floor(Math.random() * (upper - lower + 1)) + lower;
+  }
+
+  function getNextQueuedDistributionTask(accountId: number): { scheduledAt: string } | null {
+    const row = sqlite.prepare(`
+      SELECT scheduledAt
+      FROM distribution_tasks
+      WHERE accountId = ?
+        AND status IN ('queued', 'publishing')
+      ORDER BY scheduledAt DESC, id DESC
+      LIMIT 1
+    `).get(accountId) as { scheduledAt?: unknown } | undefined;
+    return row?.scheduledAt ? { scheduledAt: String(row.scheduledAt) } : null;
+  }
+
+  function resolveDispatchSeedDelayMinutes(source: string, accountId: number, contentId: number): number {
+    if (source === 'hot_bazi_manual') {
+      const hotBaziMaxPerDay = resolveDispatchPolicyValue(accountId, contentId, 'dailyLimit') ?? 8;
+      if (hotBaziMaxPerDay > 0) {
+        return randomInt(5, 60);
+      }
+    }
+
+    const minIntervalMinutes = resolveDispatchPolicyValue(accountId, contentId, 'minIntervalMinutes');
+    if (minIntervalMinutes && minIntervalMinutes > 0) {
+      return Math.max(5, minIntervalMinutes);
+    }
+
+    return 30;
+  }
+
+  function resolveDispatchScheduledAt(contentId: number, accountId: number, source: string): string {
+    const nowTime = Date.now();
+    const seedDelayMinutes = resolveDispatchSeedDelayMinutes(source, accountId, contentId);
+    const seededTime = new Date(nowTime + seedDelayMinutes * 60_000);
+    const nextQueued = getNextQueuedDistributionTask(accountId);
+    if (!nextQueued) {
+      return seededTime.toISOString();
+    }
+
+    const nextQueuedTime = new Date(nextQueued.scheduledAt).getTime();
+    if (!Number.isFinite(nextQueuedTime)) {
+      return seededTime.toISOString();
+    }
+
+    const scheduledTime = new Date(Math.max(seededTime.getTime(), nextQueuedTime + seedDelayMinutes * 60_000));
+    return scheduledTime.toISOString();
+  }
+
   function getContentStyleForContent(contentId: number): ContentStyle | null {
     const contentRow = sqlite.prepare('SELECT * FROM content_items WHERE id = ?').get(contentId);
     const content = contentRow ? mapContentItem(contentRow as Record<string, unknown>) : null;
@@ -899,11 +956,7 @@ export async function createDatabase(filename: string) {
       ? sqlite.prepare('SELECT * FROM content_styles WHERE id = ?').get(content.styleId)
       : null;
     const style = styleRow ? mapContentStyle(styleRow as Record<string, unknown>) : null;
-    const minIntervalMinutes = typeof style?.dispatchPolicyJson.minIntervalMinutes === 'number'
-      ? style.dispatchPolicyJson.minIntervalMinutes
-      : 30;
-    const scheduled = new Date();
-    scheduled.setMinutes(scheduled.getMinutes() + minIntervalMinutes);
+    const scheduledAt = resolveDispatchScheduledAt(content.id, content.accountId, source);
     const timestamp = now();
     const result = sqlite.prepare(`
       INSERT INTO distribution_tasks (contentId, accountId, platform, legacyPostId, scheduledAt, status, platformPayload, createdAt, updatedAt)
@@ -912,12 +965,20 @@ export async function createDatabase(filename: string) {
       content.id,
       content.accountId,
       account.platform,
-      scheduled.toISOString(),
+      scheduledAt,
       JSON.stringify({
         content: content.body,
         mediaPaths: content.mediaJson,
         topics: content.topicsJson,
         source,
+        dispatchPlan: source === 'hot_bazi_manual' ? {
+          kind: 'hot_bazi_random_window',
+          minDelayMinutes: 5,
+          maxDelayMinutes: 60,
+        } : {
+          kind: 'policy_based',
+          minDelayMinutes: resolveDispatchPolicyValue(account.id, content.id, 'minIntervalMinutes') ?? 30,
+        },
         trace: {
           tenantId: content.tenantId,
           pluginCode: content.pluginCode,
@@ -1583,7 +1644,8 @@ export async function createDatabase(filename: string) {
         );
         const task = mapDistributionTask(firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE id = ?').get(id)));
         if (task.legacyPostId) {
-          const mediaPaths = Array.isArray(task.platformPayload.mediaPaths) ? task.platformPayload.mediaPaths : [];
+          const content = mapContentItem(firstRow(sqlite.prepare('SELECT * FROM content_items WHERE id = ?').get(task.contentId)));
+          const mediaPaths = readMediaPathsFromTask(content, task);
           sqlite.prepare(`
             UPDATE posts
             SET accountId = ?, scheduledAt = ?, status = ?, content = ?, mediaPaths = ?, lastError = ?, updatedAt = ?
@@ -1674,11 +1736,25 @@ export async function createDatabase(filename: string) {
         return mapDistributionTask(firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE id = ?').get(id)));
       },
       delete(id: number): boolean {
-        sqlite.transaction(() => {
-          sqlite.prepare('DELETE FROM publish_runs WHERE taskId = ?').run(id);
-          sqlite.prepare('DELETE FROM distribution_tasks WHERE id = ?').run(id);
-        })();
+          sqlite.transaction(() => {
+            const row = sqlite.prepare('SELECT legacyPostId FROM distribution_tasks WHERE id = ?').get(id) as { legacyPostId?: number | null } | undefined;
+            sqlite.prepare('DELETE FROM publish_runs WHERE taskId = ?').run(id);
+            sqlite.prepare('DELETE FROM distribution_tasks WHERE id = ?').run(id);
+            if (row?.legacyPostId !== null && row?.legacyPostId !== undefined) {
+              sqlite.prepare('DELETE FROM publish_logs WHERE postId = ?').run(Number(row.legacyPostId));
+              sqlite.prepare('DELETE FROM posts WHERE id = ?').run(Number(row.legacyPostId));
+            }
+          })();
         return !sqlite.prepare('SELECT id FROM distribution_tasks WHERE id = ?').get(id);
+      },
+      deleteMany(ids: number[]): number {
+        const remove = sqlite.transaction((taskIds: number[]) => {
+          for (const id of taskIds) {
+            this.delete(id);
+          }
+        });
+        remove(ids);
+        return ids.length;
       },
     },
     hotTopicsHistory: {
@@ -2027,9 +2103,16 @@ export async function createDatabase(filename: string) {
         if (!task) {
           throw new Error(`Hot bazi task ${id} was not found`);
         }
-        return enqueueContentForDispatch(task.contentId, 'hot_bazi_manual') ?? mapDistributionTask(
-          firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE contentId = ? ORDER BY id ASC LIMIT 1').get(task.contentId)),
-        );
+        const distributionTask = enqueueContentForDispatch(task.contentId, 'hot_bazi_manual');
+        if (!distributionTask) {
+          throw new Error(`Hot bazi task ${id} could not be enqueued`);
+        }
+        sqlite.prepare(`
+          UPDATE hot_bazi_tasks
+          SET status = 'queued', updatedAt = ?
+          WHERE id = ?
+        `).run(now(), id);
+        return distributionTask;
       },
       enqueueManyToDistribution(ids: number[]): DistributionTask[] {
         return ids.map((id) => this.enqueueToDistribution(id));

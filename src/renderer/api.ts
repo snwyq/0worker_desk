@@ -262,6 +262,14 @@ export const appApi = {
         method: 'POST',
       });
     },
+    delete: (id: number): Promise<{ ok: boolean }> => {
+      if (window.weiboPublisher?.distributionTasks?.delete) {
+        return window.weiboPublisher.distributionTasks.delete(id);
+      }
+      return httpJson<{ ok: boolean }>(`/distribution-tasks/${id}`, {
+        method: 'DELETE',
+      });
+    },
     publishNow: (id: number): Promise<PublishAttemptResult> => {
       if (window.weiboPublisher?.distributionTasks?.publishNow) {
         return window.weiboPublisher.distributionTasks.publishNow(id);
@@ -284,6 +292,15 @@ export const appApi = {
         return window.weiboPublisher.distributionTasks.cancelMany(ids);
       }
       return httpJson<DistributionTask[]>('/distribution-tasks/cancel-many', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      });
+    },
+    deleteMany: (ids: number[]): Promise<{ deleted: number }> => {
+      if (window.weiboPublisher?.distributionTasks?.deleteMany) {
+        return window.weiboPublisher.distributionTasks.deleteMany(ids);
+      }
+      return httpJson<{ deleted: number }>('/distribution-tasks/delete-many', {
         method: 'POST',
         body: JSON.stringify({ ids }),
       });

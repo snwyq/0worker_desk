@@ -11,11 +11,10 @@ import {
   Layers,
   MoreHorizontal,
   FileText,
-  Eye,
   Send,
   Sparkles,
 } from 'lucide-react';
-import type { Account, ContentItem, DistributionTask, ReviewItem } from '../../shared/types';
+import type { Account, ContentItem, DistributionTask } from '../../shared/types';
 import { appApi } from '../api';
 
 export function HomePage() {
@@ -23,22 +22,19 @@ export function HomePage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [tasks, setTasks] = useState<DistributionTask[]>([]);
   const [contents, setContents] = useState<ContentItem[]>([]);
-  const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
-        const [nextAccounts, nextTasks, nextContents, nextReviewItems] = await Promise.all([
+        const [nextAccounts, nextTasks, nextContents] = await Promise.all([
           appApi.accounts.list(),
           appApi.distributionTasks.list(),
           appApi.contents.list(),
-          appApi.review.listItems().catch(() => []),
         ]);
         setAccounts(nextAccounts || []);
         setTasks(nextTasks || []);
         setContents(nextContents || []);
-        setReviewItems(nextReviewItems || []);
       } catch (err) {
         console.error('Failed to load home data:', err);
       } finally {
@@ -72,7 +68,6 @@ export function HomePage() {
   // 今日数据
   const today = new Date().toISOString().split('T')[0];
   const todayContents = contents.filter((c) => c.createdAt?.startsWith(today));
-  const pendingReviews = reviewItems.filter((r) => r.status === 'pending').length;
   const approvedContents = contents.filter((c) => c.status === 'approved').length;
 
   return (
@@ -145,7 +140,6 @@ export function HomePage() {
       <div className="tw-grid tw-grid-cols-12 tw-gap-6 tw-mb-12">
         {[
           { label: '今日生成', value: todayContents.length, icon: Sparkles, color: 'tw-text-violet-500', bg: 'tw-bg-violet-50' },
-          { label: '待审核', value: pendingReviews, icon: Eye, color: 'tw-text-amber-500', bg: 'tw-bg-amber-50' },
           { label: '已批准', value: approvedContents, icon: FileText, color: 'tw-text-blue-500', bg: 'tw-bg-blue-50' },
           { label: '已发布', value: publishedTasks, icon: Send, color: 'tw-text-emerald-500', bg: 'tw-bg-emerald-50' },
         ].map((stat, idx) => (

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Bell,
   Box,
@@ -77,6 +77,14 @@ export function App() {
   function openModule(module: WorkspaceModule) {
     setWorkspace((current) => openWorkspaceModule(current, module));
   }
+
+  useEffect(() => {
+    const handleOpenHotPeople = () => openModule('hot-people');
+    window.addEventListener('workspace:open-hot-people', handleOpenHotPeople);
+    return () => {
+      window.removeEventListener('workspace:open-hot-people', handleOpenHotPeople);
+    };
+  }, []);
 
   const renderContent = () => {
     switch (activeModule) {

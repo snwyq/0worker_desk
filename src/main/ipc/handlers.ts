@@ -1,15 +1,13 @@
 import electron from 'electron';
 import http from 'node:http';
 import type { AnalyzeHotPeopleInput, ConnectionTestResult, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, GenerateHotBaziBatchInput, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput } from '../../shared/types.js';
-import { fetchAdsPowerProfiles, startAdsPowerBrowser } from '../browser/AdsPowerApi.js';
+import { fetchAdsPowerProfiles } from '../browser/AdsPowerApi.js';
 import { createConnectorForAccount } from '../browser/BrowserConnectorFactory.js';
-import { inspectFirstPage } from '../browser/RawCdpClient.js';
 import type { AppDatabase } from '../db/database.js';
 import { readHelpDocs } from '../docs/HelpDocsService.js';
 import { getWeiboPublisherLogPath } from '../publisher/WeiboDiagnostics.js';
 import { shouldPublishPost } from '../publisher/PublishWorker.js';
 import { publishPostNow } from '../publisher/PublishService.js';
-import { fillWeiboDraft } from '../publisher/RawWeiboPublisher.js';
 import { PublishScheduler } from '../publisher/Scheduler.js';
 import { WeiboPublisher } from '../publisher/WeiboPublisher.js';
 import { listPlatformCapabilities } from '../platforms/registry.js';
@@ -182,20 +180,7 @@ async function attemptPublishPost(repositories: AppDatabase, postId: number): Pr
     repositories.posts.updateStatus(post.id, 'publishing');
 
     if (account.browserMode === 'adspower') {
-      const browserInfo = await startAdsPowerBrowser(account, repositories);
-      const page = await inspectFirstPage(browserInfo.cdpEndpoint);
-      if (page.url.includes('newlogin') || page.url.includes('passport.weibo')) {
-        const message = `Weibo login page detected. Please log in manually first: ${page.url}`;
-        repositories.posts.updateStatus(post.id, 'needs_manual_action', message);
-        recordRunForPost(repositories, post.id, 'needs_manual_action', message, startedAt);
-        return { ok: false, message, status: 'needs_manual_action' };
-      }
-      const draft = await fillWeiboDraft(browserInfo, post);
-      const message = `${draft.message}. Current page: ${draft.title || 'untitled'} ${draft.url}. Send disabled: ${draft.sendButtonDisabled}`;
-      const status = draft.ok ? 'draft' : 'failed';
-      repositories.posts.updateStatus(post.id, status, message);
-      recordRunForPost(repositories, post.id, status, message, startedAt);
-      return { ok: draft.ok, message, status };
+      return publishPostNow(repositories, post.id, { ignoreSchedule: true });
     }
 
     const connector = createConnectorForAccount(account);
@@ -368,9 +353,11 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   ipcMain.handle('distributionTasks:update', (_event, id: number, input: UpdateDistributionTaskInput) => repositories.distributionTasks.update(id, input));
   ipcMain.handle('distributionTasks:retry', (_event, id: number) => repositories.distributionTasks.retry(id));
   ipcMain.handle('distributionTasks:cancel', (_event, id: number) => repositories.distributionTasks.cancel(id));
+  ipcMain.handle('distributionTasks:delete', (_event, id: number) => ({ ok: repositories.distributionTasks.delete(id) }));
   ipcMain.handle('distributionTasks:publishNow', (_event, id: number) => scheduler.publishTaskNow(id));
   ipcMain.handle('distributionTasks:retryMany', (_event, ids: number[]) => repositories.distributionTasks.retryMany(ids));
   ipcMain.handle('distributionTasks:cancelMany', (_event, ids: number[]) => repositories.distributionTasks.cancelMany(ids));
+  ipcMain.handle('distributionTasks:deleteMany', (_event, ids: number[]) => ({ deleted: repositories.distributionTasks.deleteMany(ids) }));
   ipcMain.handle('distributionTasks:returnToReview', (_event, id: number, comment?: string) => (
     repositories.distributionTasks.returnToReview(id, comment ?? 'Returned to review')
   ));
@@ -780,6 +767,11 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
         return;
       }
 
+      if (request.method === 'DELETE' && distributionTaskMatch) {
+        sendJson(request, response, 200, { ok: repositories.distributionTasks.delete(Number(distributionTaskMatch[1])) });
+        return;
+      }
+
       const distributionRetryMatch = request.url?.match(/^\/distribution-tasks\/(\d+)\/retry$/);
       if (request.method === 'POST' && distributionRetryMatch) {
         sendJson(request, response, 200, repositories.distributionTasks.retry(Number(distributionRetryMatch[1])));
@@ -817,6 +809,12 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
       if (request.method === 'POST' && request.url === '/distribution-tasks/cancel-many') {
         const input = await readBody(request) as { ids: number[] };
         sendJson(request, response, 200, repositories.distributionTasks.cancelMany(input.ids));
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/distribution-tasks/delete-many') {
+        const input = await readBody(request) as { ids: number[] };
+        sendJson(request, response, 200, { deleted: repositories.distributionTasks.deleteMany(input.ids) });
         return;
       }
 

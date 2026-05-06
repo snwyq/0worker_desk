@@ -41,18 +41,22 @@ export async function publishPostNow(repositories: AppDatabase, postId: number, 
     repositories.posts.updateStatus(post.id, 'publishing');
     recordRun(repositories, post.id, 'publishing', 'Starting automated publish...', startedAt);
     const browserInfo = await startAdsPowerBrowser(account, repositories);
+    console.log(`[publish-now] post=${post.id} draft step started`);
     const draft = await fillWeiboDraft(browserInfo, post, { logPath: options.logPath });
+    console.log(`[publish-now] post=${post.id} draft step finished ok=${draft.ok} message=${draft.message}`);
     if (!draft.ok) {
       repositories.posts.updateStatus(post.id, 'failed', draft.message);
       recordRun(repositories, post.id, 'failed', draft.message, startedAt);
       return { ok: false, message: draft.message, status: 'failed' };
     }
 
+    console.log(`[publish-now] post=${post.id} publish step started`);
     const result = await publishWeiboDraft(browserInfo, {
       hasMedia: post.mediaPaths.length > 0,
       mediaCount: post.mediaPaths.length,
       logPath: options.logPath,
     });
+    console.log(`[publish-now] post=${post.id} publish step finished ok=${result.ok} message=${result.message}`);
     if (!result.ok) {
       repositories.posts.updateStatus(post.id, 'failed', result.message);
       recordRun(repositories, post.id, 'failed', result.message, startedAt);

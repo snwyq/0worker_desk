@@ -40,6 +40,22 @@ interface RawPublishOptions {
   logPath?: string;
 }
 
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 function createRawPublishLogger(logPath: string | undefined, label: string) {
   const recent: string[] = [];
   const log = async (message: string) => {
@@ -90,14 +106,31 @@ export async function fillWeiboDraft(browserInfo: AdsPowerBrowserInfo, post: Pos
 
     const draftResult = await fillComposeText(client, normalizeWeiboPostText(post.content));
     await diagnostics.log(draftResult.message);
-    const uploadResult = await uploadMediaFiles(client, post.mediaPaths);
+    await diagnostics.log(`Media upload step started: ${post.mediaPaths.length} file(s)`);
+    const uploadResult = await withTimeout(
+      uploadMediaFiles(client, post.mediaPaths),
+      20_000,
+      `Media upload step timed out after 20 seconds for ${post.mediaPaths.length} file(s)`,
+    );
+    await diagnostics.log(`Media upload step finished: uploaded=${uploadResult.uploaded}`);
     if (uploadResult.uploaded > 0) {
       await diagnostics.log(`Queued ${uploadResult.uploaded} media file(s) for upload`);
+    }
+    if (uploadResult.uploaded === 0) {
+      return {
+        ...draftResult,
+        sendButtonDisabled: draftResult.sendButtonDisabled ?? false,
+        message: [
+          draftResult.message,
+          'text-only draft ready',
+          diagnostics.suffix(),
+        ].filter(Boolean).join('; '),
+      };
     }
     const ready = await waitForSendReady(client, {
       hasMedia: uploadResult.uploaded > 0,
       mediaCount: uploadResult.uploaded,
-      timeoutMs: uploadResult.uploaded > 0 ? 45_000 : 8_000,
+      timeoutMs: 45_000,
       phase: 'draft',
       log: diagnostics.log,
     });
@@ -550,13 +583,21 @@ function weiboDomRuntimeHelpers() {
       disabled: Boolean(el.disabled),
       hidden: Boolean(el.hidden || el.offsetParent === null),
       name: el.getAttribute?.('name') || '',
+      role: el.getAttribute?.('role') || '',
+      title: el.getAttribute?.('title') || '',
+      dataset: el.dataset ? Object.fromEntries(Object.entries(el.dataset)) : {},
       text: el.innerText || el.textContent || '',
     }) : null;
     const findComposeTextarea = () => [...document.querySelectorAll('textarea')]
       .find((el) => isWeiboComposePlaceholder(el.getAttribute('placeholder')))
       ?? document.querySelector('textarea');
-    const findSendButton = () => [...document.querySelectorAll('button, [role="button"]')]
-      .find((el) => isWeiboSendButtonElement({ text: el.innerText || el.textContent || '' }));
+    const findSendButton = () => [...document.querySelectorAll('button, [role="button"], span, div, a')]
+      .find((el) => {
+        const snapshot = toElementSnapshot(el);
+        return isVisibleElement(el)
+          && !isDisabledElement(snapshot)
+          && isWeiboSendButtonElement(snapshot);
+      });
     const isVisibleElement = (el) => {
       const rect = el.getBoundingClientRect?.();
       const style = window.getComputedStyle(el);

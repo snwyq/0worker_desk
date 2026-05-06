@@ -3,12 +3,6 @@ import type { GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotPerson }
 import { Solar } from 'lunar-typescript';
 import { AiService } from './AiService.js';
 
-function buildScheduleTime(intervalMinutes: number, index: number) {
-  const next = new Date();
-  next.setMinutes(next.getMinutes() + intervalMinutes * index);
-  return next.toISOString();
-}
-
 function toSourceTopic(person: HotPerson) {
   return String(person.sourceTopicTitle || person.name || '').trim();
 }
@@ -25,21 +19,21 @@ function getDefaultPromptTemplate() {
     '热点：{{sourceTopic}}',
     '',
     '【全局要求】',
-    '行文风格：铁口直断，专业犀利，干脆利落，理出有据。',
+    '行文风格：铁口直断，专业犀利，干脆利落，理据有据。',
     '字数限制：总字数严格控制在300字以内，拒绝废话。',
-    '格式禁忌：除首行话题标签外，正文绝对禁止使用任何 Markdown 格式（如加粗、星号、列表符等），仅保留自然换行。',
+    '格式禁忌：除首行话题标签外，正文绝对禁止使用任何 Markdown 格式，仅保留自然换行。',
     '内容导向：命理分析必须与该人物已知的真实经历、人生轨迹紧密咬合。',
-    '流年要求：当前要分析的流年年份是{{currentYear}}年（{{currentYearGanzhi}}），下一年是{{nextYear}}年（{{nextYearGanzhi}}），不要擅自改写成年份或干支。',
+    '流年要求：当前要分析的流年年份是{{currentYear}}年（{{currentYearGanzhi}}），下一年是{{nextYear}}年（{{nextYearGanzhi}}），不要擅自改写成其他年份或干支。',
     '',
     '【严格文章结构】',
     '第一行（独占一行）：#{{sourceTopic}}#',
     '',
-    '第一段（约60字，格局定位）：首句必须直接写出“{{personName}}”的名字。随后简明扼要地给出其八字排盘、格局定性及五行喜忌分析。',
+    '第一段（约40字，格局定位）：首句必须直接写出“{{personName}}”的名字。随后简明扼要地给出其八字排盘、格局定性及五行喜忌分析。',
     '',
     '第二段（大运与真实经历对应，重点段落）：',
     '要求：短句为主，不要把分析和经历混在超长句中；真实经历的字数必须多于命理分析。',
     '阶段一：先写1句重点大运或年份的命理判断，紧接2到3句其在该阶段真实的经历变化。',
-    '阶段二：必须换行另起，再写1句下一步大运的命理判断，紧接1到2句对应的真实经历。',
+    '阶段二：必须换行另起，再写1句下一个大运的命理判断，紧接2到3句对应的真实经历。',
     '',
     '第三段（综合论断）：整体评析大运走势，直接点明这套八字组合及运势对该人物在事业、家庭、感情、健康上的实质性影响。',
     '',
@@ -50,7 +44,6 @@ function getDefaultPromptTemplate() {
 function renderPromptTemplate(template: string, person: HotPerson) {
   const currentYear = new Date().getFullYear();
   const nextYear = currentYear + 1;
-  // Use a mid-year date so the Ganzhi year has definitely crossed Li Chun.
   const currentYearGanzhi = Solar.fromYmdHms(currentYear, 7, 1, 12, 0, 0).getLunar().getYearInGanZhi();
   const nextYearGanzhi = Solar.fromYmdHms(nextYear, 7, 1, 12, 0, 0).getLunar().getYearInGanZhi();
   return template
@@ -129,40 +122,32 @@ export class HotBaziService {
           continue;
         }
 
+        const itemMediaPaths: string[] = [];
+        const generatedAt = new Date().toISOString();
+
         const content = this.db.contentItems.create({
           title: `${person.name} 热点八字`,
           body,
           source: 'ai',
-          status: input.requireReview ? 'reviewing' : 'approved',
+          status: 'ready',
           accountId: account.id,
           pluginCode: 'maoxiaoxian',
           styleId: 'mx_hot_bazi',
           topicsJson: [person.name, '热点八字'],
-          mediaJson: input.mediaPaths.map((path) => ({ path })),
+          mediaJson: itemMediaPaths.map((path) => ({ path })),
           sourceJson: {
             hotPersonId: person.id,
             sourceTopic: toSourceTopic(person),
-            scheduleRule: input.scheduleRule,
             promptTemplate,
             model,
           },
           riskJson: {
-            reviewRequired: input.requireReview,
+            reviewRequired: false,
             publicFigure: true,
           },
         });
         result.createdContents += 1;
         result.contentIds.push(content.id);
-
-        if (input.requireReview) {
-          this.db.reviewItems.create({
-            contentId: content.id,
-            reviewMode: 'manual',
-            status: 'pending',
-            comment: '热点八字批量生成待审核',
-          });
-          result.createdReviews += 1;
-        }
 
         const task = this.db.hotBaziTasks.create({
           contentId: content.id,
@@ -170,15 +155,15 @@ export class HotBaziService {
           platform: account.platform,
           hotPersonId: person.id,
           sourceTopic: toSourceTopic(person),
-          scheduledAt: buildScheduleTime(input.intervalMinutes, index + 1),
-          status: input.requireReview ? 'reviewing' : 'queued',
-          automationEnabled: input.automationEnabled,
-          intervalMinutes: input.intervalMinutes,
-          scheduleRuleJson: { rule: input.scheduleRule },
-          mediaPathsJson: input.mediaPaths,
+          scheduledAt: generatedAt,
+          status: 'draft',
+          automationEnabled: false,
+          intervalMinutes: 0,
+          scheduleRuleJson: {},
+          mediaPathsJson: itemMediaPaths,
           platformPayload: {
             content: body,
-            mediaPaths: input.mediaPaths,
+            mediaPaths: itemMediaPaths,
             promptTemplate,
             model,
           },

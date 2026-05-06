@@ -51,9 +51,11 @@ declare global {
         update: (id: number, input: UpdateDistributionTaskInput) => Promise<DistributionTask>;
         retry: (id: number) => Promise<DistributionTask>;
         cancel: (id: number) => Promise<DistributionTask>;
+        delete?: (id: number) => Promise<{ ok: boolean }>;
         publishNow?: (id: number) => Promise<PublishAttemptResult>;
         retryMany: (ids: number[]) => Promise<DistributionTask[]>;
         cancelMany: (ids: number[]) => Promise<DistributionTask[]>;
+        deleteMany?: (ids: number[]) => Promise<{ deleted: number }>;
         returnToReview?: (id: number, comment?: string) => Promise<DistributionTask>;
       };
       hotBaziTasks?: {

@@ -39,6 +39,7 @@ import { appApi } from '../api';
 import { formatQueueErrorMessage } from '../queueErrors';
 import { readTaskEditorDraft } from '../queueEditorModel';
 import { htmlToPlainPreview } from '../textFormatting';
+import { normalizePublishMediaPaths } from '../../shared/mediaPaths';
 
 const taskFilters: Array<{ id: 'all' | PostStatus; label: string }> = [
   { id: 'all', label: '全部状态' },
@@ -54,8 +55,8 @@ export function QueuePage() {
   const [contents, setContents] = useState<ContentItem[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
   const [tasks, setTasks] = useState<DistributionTask[]>([]);
-  const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
-  const [contentVersionsById, setContentVersionsById] = useState<Record<number, ContentVersion[]>>({});
+  const [reviewItems] = useState<ReviewItem[]>([]);
+  const [contentVersionsById] = useState<Record<number, ContentVersion[]>>({});
   const [loading, setLoading] = useState(true);
   
   // UI State
@@ -65,6 +66,7 @@ export function QueuePage() {
   const [expandedTaskId, setExpandedTaskId] = useState<number | null>(null);
   const [taskRuns, setTaskRuns] = useState<Record<number, PublishRun[]>>({});
   const [busyTaskId, setBusyTaskId] = useState<number | null>(null);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
   const [busyReviewId, setBusyReviewId] = useState<number | null>(null);
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null);
   
@@ -76,28 +78,22 @@ export function QueuePage() {
   const [error, setError] = useState('');
   const [editorHtml, setEditorHtml] = useState('');
   const [reviewDrafts, setReviewDrafts] = useState<Record<number, { title: string; body: string; comment: string }>>({});
-  
   // Keep the editor content stable across React re-renders.
   const contentRef = useRef('');
 
   async function load() {
     try {
-      const [nextAccounts, nextContents, nextPosts, nextTasks, nextReviewItems] = await Promise.all([
+      const [nextAccounts, nextContents, nextPosts, nextTasks] = await Promise.all([
         appApi.accounts.list(),
         appApi.contents.list(),
         appApi.posts.list(),
         appApi.distributionTasks.list(),
-        appApi.review.listItems().catch(() => []),
       ]);
-      const nextVersions = await Promise.all(
-        (nextReviewItems || []).map(async (item) => [item.contentId, await appApi.contents.versions(item.contentId)] as const),
-      );
       setAccounts(nextAccounts || []);
       setContents(nextContents || []);
       setPosts(nextPosts || []);
       setTasks(nextTasks || []);
-      setReviewItems(nextReviewItems || []);
-      setContentVersionsById(Object.fromEntries(nextVersions));
+      setSelectedTaskIds((current) => current.filter((id) => (nextTasks || []).some((task) => task.id === id)));
     } catch (err) {
       console.error('Failed to load queue data:', err);
     } finally {
@@ -157,6 +153,25 @@ export function QueuePage() {
   const visibleTasks = filteredTasks.sort((a, b) => 
     new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime()
   );
+  const allVisibleTaskIds = visibleTasks.map((task) => task.id);
+  const allVisibleSelected = allVisibleTaskIds.length > 0 && allVisibleTaskIds.every((id) => selectedTaskIds.includes(id));
+
+  function toggleTaskSelection(taskId: number) {
+    setSelectedTaskIds((current) => (
+      current.includes(taskId)
+        ? current.filter((id) => id !== taskId)
+        : [...current, taskId]
+    ));
+  }
+
+  function toggleAllVisibleTasks() {
+    setSelectedTaskIds((current) => {
+      if (allVisibleSelected) {
+        return current.filter((id) => !allVisibleTaskIds.includes(id));
+      }
+      return Array.from(new Set([...current, ...allVisibleTaskIds]));
+    });
+  }
 
   function resetForm() {
     setEditingTaskId(null);
@@ -196,7 +211,7 @@ export function QueuePage() {
       const dateObj = new Date(scheduledAt);
       if (isNaN(dateObj.getTime())) throw new Error('发布时间格式不正确');
 
-      const nextMediaPaths = mediaPaths.split('\n').map((path) => path.trim()).filter(Boolean);
+      const nextMediaPaths = normalizePublishMediaPaths(mediaPaths.split('\n'));
       const finalContent = editorHtml;
 
       if (editingTaskId) {
@@ -238,13 +253,46 @@ export function QueuePage() {
     }
   }
 
-  async function deleteTask(postId: number) {
+  async function deleteTask(taskId: number) {
     if (!window.confirm('确定要删除此任务吗？')) return;
     try {
-      await appApi.posts.delete(postId);
+      const result = await appApi.distributionTasks.delete(taskId);
+      if (!result?.ok) {
+        throw new Error('DELETE_DISTRIBUTION_TASK_FAILED');
+      }
       await load();
     } catch (err) {
       console.error('Delete failed:', err);
+      alert('删除失败: ' + formatQueueErrorMessage(err));
+    }
+  }
+
+  async function deleteSelectedTasks() {
+    if (selectedTaskIds.length === 0) return;
+    if (!window.confirm(`确定要删除选中的 ${selectedTaskIds.length} 条任务吗？`)) return;
+    try {
+      try {
+        const result = await appApi.distributionTasks.deleteMany(selectedTaskIds);
+        if (!result || result.deleted <= 0) {
+          throw new Error('DELETE_DISTRIBUTION_TASKS_FAILED');
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!message.includes('Not found')) {
+          throw err;
+        }
+        for (const taskId of selectedTaskIds) {
+          const result = await appApi.distributionTasks.delete(taskId);
+          if (!result?.ok) {
+            throw new Error('DELETE_DISTRIBUTION_TASK_FAILED');
+          }
+        }
+      }
+      setSelectedTaskIds([]);
+      await load();
+    } catch (err) {
+      console.error('Bulk delete failed:', err);
+      alert('批量删除失败: ' + formatQueueErrorMessage(err));
     }
   }
 
@@ -265,7 +313,10 @@ export function QueuePage() {
   async function returnTaskToReview(task: DistributionTask) {
     if (busyTaskId) return;
     const comment = window.prompt('请输入退回审核原因', task.lastError || '需要重新审核') || '';
-    if (!comment.trim()) return;
+    if (!comment.trim()) {
+      alert('请先填写驳回原因。');
+      return;
+    }
     setBusyTaskId(task.id);
     try {
       await appApi.distributionTasks.returnToReview(task.id, comment.trim());
@@ -316,6 +367,7 @@ export function QueuePage() {
       }
       await appApi.review.reject(item.id, 'operator', comment);
       await load();
+      alert('已驳回，这条内容已从审核池移除。');
     } catch (err) {
       alert('驳回失败: ' + formatQueueErrorMessage(err));
     } finally {
@@ -607,6 +659,18 @@ export function QueuePage() {
             </button>
           ))}
         </div>
+        <label className="tw-inline-flex tw-items-center tw-gap-2 tw-text-sm tw-font-bold tw-text-slate-700">
+          <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisibleTasks} />
+          全选
+        </label>
+        <button
+          type="button"
+          onClick={() => void deleteSelectedTasks()}
+          disabled={selectedTaskIds.length === 0}
+          className="tw-rounded-[16px] tw-border tw-border-red-200 tw-bg-red-50 tw-px-4 tw-py-2.5 tw-text-xs tw-font-black tw-text-red-600 disabled:tw-opacity-50"
+        >
+          批量删除
+        </button>
       </div>
 
       {/* Rich Content Modal Form Overlay */}
@@ -678,7 +742,7 @@ export function QueuePage() {
                        <div className="tw-bg-slate-50 tw-p-6 tw-rounded-[32px] tw-border tw-border-slate-100">
                           <textarea
                             className="tw-w-full tw-bg-transparent tw-border-none tw-p-0 tw-text-[12px] tw-font-mono tw-text-slate-500 tw-min-h-[80px] focus:tw-ring-0 tw-resize-none"
-                            placeholder="D:\Images\1.jpg"
+                            placeholder="不上传媒体时留空；需要上传时通过“选择媒体文件”添加"
                             value={mediaPaths}
                             onChange={(e) => setMediaPaths(e.target.value)}
                           />
@@ -778,6 +842,9 @@ export function QueuePage() {
           <table className="tw-w-full tw-text-left tw-min-w-[1000px]">
             <thead>
               <tr className="tw-bg-slate-50/50 tw-border-b tw-border-slate-50">
+                <th className="tw-px-4 tw-py-5 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-w-12">
+                  <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisibleTasks} />
+                </th>
                 <th className="tw-px-8 tw-py-5 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-w-48">任务主体</th>
                 <th className="tw-px-8 tw-py-5 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest">内容摘要</th>
                 <th className="tw-px-8 tw-py-5 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-w-40">执行时间</th>
@@ -797,6 +864,9 @@ export function QueuePage() {
                 return (
                   <Fragment key={task.id}>
                     <tr className="hover:tw-bg-slate-50/40 tw-transition-colors group">
+                      <td className="tw-px-4 tw-py-6 tw-align-top">
+                        <input type="checkbox" checked={selectedTaskIds.includes(task.id)} onChange={() => toggleTaskSelection(task.id)} />
+                      </td>
                       <td className="tw-px-8 tw-py-6 tw-whitespace-nowrap">
                         <div className="tw-flex tw-items-center tw-gap-3">
                           <div className="tw-w-10 tw-h-10 tw-bg-slate-50 tw-text-slate-400 tw-rounded-xl tw-flex tw-items-center tw-justify-center group-hover:tw-bg-brand-50 group-hover:tw-text-brand-500 tw-transition-all">
@@ -900,7 +970,7 @@ export function QueuePage() {
                                 <ClipboardCheck size={18} />
                               </button>
                             )}
-                            <button onClick={() => post && deleteTask(post.id)} className="tw-p-2 tw-text-slate-300 hover:tw-text-red-500 hover:tw-bg-red-50 tw-rounded-xl tw-transition-all" title="删除">
+                            <button onClick={() => void deleteTask(task.id)} className="tw-p-2 tw-text-slate-300 hover:tw-text-red-500 hover:tw-bg-red-50 tw-rounded-xl tw-transition-all" title="删除">
                               <Trash2 size={18} />
                             </button>
                           </div>
@@ -909,7 +979,7 @@ export function QueuePage() {
                     </tr>
                     {isExpanded && (
                       <tr className="tw-bg-slate-50/20">
-                        <td colSpan={5} className="tw-px-8 tw-py-6">
+                        <td colSpan={6} className="tw-px-8 tw-py-6">
                           <div className="tw-bg-white tw-rounded-2xl tw-p-6 tw-border tw-border-slate-100 tw-shadow-sm tw-animate-fade-in">
                             <div className="tw-flex tw-items-center tw-justify-between tw-mb-4">
                               <h4 className="tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest">任务执行链路追踪</h4>

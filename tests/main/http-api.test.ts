@@ -1504,6 +1504,144 @@ describe('http api', () => {
     }));
   });
 
+  test('deletes distribution tasks through the local api and removes linked records', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'delete api account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+    });
+    const content = db.contentItems.create({
+      title: 'Delete API task',
+      body: 'Delete through API',
+      source: 'manual',
+      status: 'ready',
+      accountId: account.id,
+    });
+    const task = db.distributionTasks.create({
+      contentId: content.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'Delete through API' },
+    });
+    const post = db.distributionTasks.ensureLegacyPost(task.id);
+    db.publishRuns.create({
+      taskId: task.id,
+      accountId: account.id,
+      platform: 'weibo',
+      status: 'failed',
+      message: 'Delete through API',
+      startedAt: '2026-05-01T10:00:00.000Z',
+      finishedAt: '2026-05-01T10:01:00.000Z',
+      screenshotPath: '',
+    });
+    const scheduler = new PublishScheduler(db);
+    const port = 51889;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/distribution-tasks/${task.id}`, {
+      method: 'DELETE',
+    });
+    const result = await response.json() as { ok: boolean };
+
+    expect(response.status).toBe(200);
+    expect(result.ok).toBe(true);
+    expect(db.distributionTasks.list()).toHaveLength(0);
+    expect(db.posts.findById(post.id)).toBeNull();
+    expect(db.publishRuns.listByTask(task.id)).toHaveLength(0);
+  });
+
+  test('deletes distribution tasks in bulk through the local api', async () => {
+    const db = await createDatabase(':memory:');
+    const account = db.accounts.create({
+      name: 'bulk delete api account',
+      platform: 'weibo',
+      browserMode: 'manual_port',
+      providerProfileId: '',
+      wsEndpoint: '',
+      debuggingPort: 9222,
+      status: 'active',
+      notes: '',
+    });
+    const firstContent = db.contentItems.create({
+      title: 'Bulk API delete 1',
+      body: 'Bulk API body 1',
+      source: 'manual',
+      status: 'ready',
+      accountId: account.id,
+    });
+    const secondContent = db.contentItems.create({
+      title: 'Bulk API delete 2',
+      body: 'Bulk API body 2',
+      source: 'manual',
+      status: 'ready',
+      accountId: account.id,
+    });
+    const first = db.distributionTasks.create({
+      contentId: firstContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T10:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'Bulk API body 1' },
+    });
+    const second = db.distributionTasks.create({
+      contentId: secondContent.id,
+      accountId: account.id,
+      platform: 'weibo',
+      scheduledAt: '2026-05-01T11:00:00.000Z',
+      status: 'queued',
+      platformPayload: { content: 'Bulk API body 2' },
+    });
+    const firstPost = db.distributionTasks.ensureLegacyPost(first.id);
+    const secondPost = db.distributionTasks.ensureLegacyPost(second.id);
+    db.publishRuns.create({
+      taskId: first.id,
+      accountId: account.id,
+      platform: 'weibo',
+      status: 'failed',
+      message: 'Bulk API delete first',
+      startedAt: '2026-05-01T10:00:00.000Z',
+      finishedAt: '2026-05-01T10:01:00.000Z',
+      screenshotPath: '',
+    });
+    db.publishRuns.create({
+      taskId: second.id,
+      accountId: account.id,
+      platform: 'weibo',
+      status: 'failed',
+      message: 'Bulk API delete second',
+      startedAt: '2026-05-01T11:00:00.000Z',
+      finishedAt: '2026-05-01T11:01:00.000Z',
+      screenshotPath: '',
+    });
+    const scheduler = new PublishScheduler(db);
+    const port = 51890;
+    const server = startHttpApi(db, scheduler, port);
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/distribution-tasks/delete-many`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [first.id, second.id] }),
+    });
+    const result = await response.json() as { deleted: number };
+
+    expect(response.status).toBe(200);
+    expect(result.deleted).toBe(2);
+    expect(db.distributionTasks.list()).toHaveLength(0);
+    expect(db.posts.findById(firstPost.id)).toBeNull();
+    expect(db.posts.findById(secondPost.id)).toBeNull();
+  });
+
   test('retries and cancels distribution tasks in bulk through the local api', async () => {
     const db = await createDatabase(':memory:');
     const account = db.accounts.create({

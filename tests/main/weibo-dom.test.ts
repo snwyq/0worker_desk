@@ -17,6 +17,12 @@ describe('Weibo DOM helpers', () => {
     expect(isWeiboSendButtonElement({ text: '\u53d1\u9001', disabled: false, className: '' })).toBe(true);
     expect(isWeiboSendButtonElement({ text: '\u53d1\u5e03', disabled: false, className: '' })).toBe(true);
     expect(isWeiboSendButtonElement({ text: '\u8f6c\u53d1', disabled: false, className: '' })).toBe(false);
+    expect(isWeiboSendButtonElement({
+      text: '',
+      title: '\u53d1\u9001',
+      disabled: false,
+      className: '',
+    })).toBe(true);
     expect(getSendButtonStatusFromDom({
       text: '\u53d1\u9001',
       disabled: false,

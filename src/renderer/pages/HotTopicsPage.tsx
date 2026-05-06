@@ -7,6 +7,10 @@ import {
   RefreshCw,
   Search,
   Wand2,
+  Hash,
+  Clock,
+  AlertCircle,
+  LayoutGrid,
 } from 'lucide-react';
 import { appApi } from '../api';
 import { AGENT_DRAFT_STORAGE_KEY, buildAgentDraftFromHotTopic } from '../../shared/agentDraft';
@@ -49,24 +53,17 @@ function readTopicValue(topic: HotTopic, key: string) {
 
 function getPlatformStyle(platform: string | undefined) {
   const value = platform?.toLowerCase() ?? '';
-  if (value.includes('寰崥') || value.includes('weibo')) return 'tw-bg-red-50 tw-text-red-500 tw-border-red-100';
-  if (value.includes('鐭ヤ箮') || value.includes('zhihu')) return 'tw-bg-blue-50 tw-text-blue-500 tw-border-blue-100';
-  if (value.includes('鐧惧害') || value.includes('baidu')) return 'tw-bg-blue-50 tw-text-blue-600 tw-border-blue-100';
-  if (value.includes('澶存潯') || value.includes('toutiao')) return 'tw-bg-orange-50 tw-text-orange-600 tw-border-orange-100';
-  return 'tw-bg-slate-100 tw-text-slate-600 tw-border-slate-200';
-}
-
-function getColumnStyle(group: TopicColumn['group']) {
-  if (group === 'core') return 'tw-text-slate-900 tw-bg-slate-100/60';
-  if (group === 'api') return 'tw-text-blue-500 tw-bg-blue-50/40';
-  if (group === 'link') return 'tw-text-green-600 tw-bg-green-50/30';
-  return 'tw-text-slate-400 tw-bg-slate-50';
+  if (value.includes('微博') || value.includes('weibo')) return 'tw-text-red-500 tw-bg-red-50/50';
+  if (value.includes('知乎') || value.includes('zhihu')) return 'tw-text-blue-500 tw-bg-blue-50/50';
+  if (value.includes('百度') || value.includes('baidu')) return 'tw-text-blue-600 tw-bg-blue-50/50';
+  if (value.includes('头条') || value.includes('toutiao')) return 'tw-text-orange-600 tw-bg-orange-50/50';
+  return 'tw-text-slate-500 tw-bg-slate-50';
 }
 
 function formatTopicPreview(value: unknown) {
   if (value === null || value === undefined || value === '') return '-';
   const text = String(value).replace(/\s+/g, ' ').trim();
-  return text.length > 80 ? `${text.slice(0, 80)}...` : text;
+  return text.length > 60 ? `${text.slice(0, 60)}...` : text;
 }
 
 export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
@@ -80,17 +77,17 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
   const [error, setError] = useState('');
 
   const mirrorColumns: TopicColumn[] = useMemo(() => ([
-    { key: 'platform', label: t('hotTopics.columns.platform'), group: 'core', width: '120px' },
-    { key: 'createdAt', label: t('hotTopics.columns.createdAt'), group: 'api', width: '190px' },
-    { key: 'title', label: t('hotTopics.columns.title'), group: 'core', width: '360px' },
-    { key: 'rank', label: t('hotTopics.columns.rank'), group: 'api', width: '90px' },
-    { key: 'hotValue', label: t('hotTopics.columns.hotValue'), group: 'api', width: '130px' },
-    { key: 'hot_value', label: t('hotTopics.columns.hotValueRaw'), group: 'api', width: '140px' },
-    { key: 'author', label: t('hotTopics.columns.author'), group: 'api', width: '150px' },
-    { key: 'desc', label: t('hotTopics.columns.desc'), group: 'mirror', width: '380px' },
-    { key: 'mobilUrl', label: t('hotTopics.columns.mobileUrl'), group: 'link', width: '150px' },
-    { key: 'thumbnail', label: t('hotTopics.columns.thumbnail'), group: 'mirror', width: '180px' },
-    { key: 'extra', label: t('hotTopics.columns.extra'), group: 'mirror', width: '180px' },
+    { key: 'platform', label: t('hotTopics.columns.platform'), group: 'core', width: '100px' },
+    { key: 'title', label: t('hotTopics.columns.title'), group: 'core', width: '320px' },
+    { key: 'extra', label: t('hotTopics.columns.extra'), group: 'mirror', width: '140px' },
+    { key: 'createdAt', label: t('hotTopics.columns.createdAt'), group: 'api', width: '160px' },
+    { key: 'rank', label: t('hotTopics.columns.rank'), group: 'api', width: '70px' },
+    { key: 'hotValue', label: t('hotTopics.columns.hotValue'), group: 'api', width: '100px' },
+    { key: 'hot_value', label: t('hotTopics.columns.hotValueRaw'), group: 'api', width: '110px' },
+    { key: 'author', label: t('hotTopics.columns.author'), group: 'api', width: '120px' },
+    { key: 'desc', label: t('hotTopics.columns.desc'), group: 'mirror', width: '300px' },
+    { key: 'mobilUrl', label: t('hotTopics.columns.mobileUrl'), group: 'link', width: '130px' },
+    { key: 'thumbnail', label: t('hotTopics.columns.thumbnail'), group: 'mirror', width: '150px' },
   ]), [t]);
 
   function buildSourceStatusMessage(sourceStatus?: Array<{ platform: string; ok: boolean; reason?: string; count?: number }>) {
@@ -120,11 +117,8 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
   }
 
   async function deleteAndForceReload() {
-    const confirmed = window.confirm(t('hotTopics.deleteAndSyncConfirm'));
-    if (!confirmed) {
-      return;
-    }
-
+    const confirmed = window.confirm('【警告】此操作将彻底删除本地存储的所有热点素材数据！\n\n该操作不可撤销，确定要清空数据库并重新同步吗？');
+    if (!confirmed) return;
     setLoading(true);
     setError('');
     try {
@@ -133,17 +127,11 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
       setHotTopics(response.items || []);
       setLastFetchTime(response.lastFetchTime || new Date().toISOString());
       setLastInsertedCount(Number(response.insertedCount ?? 0));
-
-      const failedPlatforms = buildSourceStatusMessage(response.sourceStatus);
       const summary = t('hotTopics.resetSummary', {
         deleted: deleted.deleted,
         inserted: response.insertedCount ?? response.items?.length ?? 0,
       });
-      setError(
-        failedPlatforms
-          ? t('hotTopics.resetSummaryWithFailure', { summary, details: failedPlatforms })
-          : summary,
-      );
+      setError(summary);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -191,205 +179,135 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
   }
 
   return (
-    <div className="tw-min-h-screen tw-pb-20 tw-animate-fade-in tw-relative">
-      <div className="tw-mb-4 tw-flex tw-items-center tw-gap-3">
-        <div className="tw-p-3 tw-bg-slate-900 tw-text-white tw-rounded-2xl">
-          <Globe size={22} />
+    <div className="tw-min-h-screen tw-bg-slate-50/30 tw-px-2 md:tw-px-6 tw-py-4 tw-animate-fade-in">
+      {/* 极简无界页头 */}
+      <div className="tw-mb-6 tw-flex tw-flex-col md:tw-flex-row md:tw-items-center tw-justify-between tw-gap-4">
+        <div className="tw-flex tw-items-center tw-gap-4">
+          <div className="tw-h-12 tw-w-12 tw-bg-white tw-rounded-2xl tw-flex tw-items-center tw-justify-center tw-shadow-sm">
+            <Globe className="tw-text-brand-500" size={24} />
+          </div>
+          <div>
+            <h1 className="tw-text-xl tw-font-bold tw-text-slate-900 tw-tracking-tight">{t('hotTopics.title')}</h1>
+            <div className="tw-flex tw-items-center tw-gap-3 tw-mt-0.5">
+              <span className="tw-text-[11px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-wider">实时热度素材库</span>
+              <div className="tw-h-1 tw-w-1 tw-bg-slate-200 tw-rounded-full" />
+              <span className="tw-text-[11px] tw-font-bold tw-text-brand-500">{filteredTopics.length} 话题已就绪</span>
+            </div>
+          </div>
         </div>
-        <div>
-          <h1 className="tw-text-2xl md:tw-text-3xl tw-font-black tw-text-slate-900 tw-tracking-tight">
-            {t('hotTopics.title')}
-          </h1>
-          {lastFetchTime && (
-            <div className="tw-mt-1 tw-text-sm tw-text-slate-500">
-              {t('hotTopics.lastSynced')}：{new Date(lastFetchTime).toLocaleString()}
+
+        <div className="tw-flex tw-items-center tw-gap-4">
+          {isCoolingDown && !loading && (
+            <div className="tw-flex tw-items-center tw-gap-1.5 tw-text-[11px] tw-font-bold tw-text-orange-500/80">
+              <Clock size={12} />
+              <span>距下次同步 {cooldownHours}h {Math.max(cooldownMinutes, 1)}m</span>
             </div>
           )}
+          <button
+            onClick={() => void loadHotTopics(true)}
+            disabled={loading || isCoolingDown}
+            className={`tw-flex tw-items-center tw-gap-2 tw-px-6 tw-py-2.5 tw-bg-white tw-rounded-2xl tw-shadow-sm tw-text-xs tw-font-bold tw-transition-all active:tw-scale-95 ${loading || isCoolingDown ? 'tw-text-slate-300' : 'tw-text-brand-500 hover:tw-bg-brand-50/50'}`}
+          >
+            <RefreshCw size={14} className={loading ? 'tw-animate-spin' : ''} />
+            {loading ? t('hotTopics.syncing') : '同步最新热点'}
+          </button>
         </div>
       </div>
 
-      {error && (
-        <div className="tw-mb-4 tw-rounded-2xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-5 tw-py-4 tw-text-sm tw-font-bold tw-text-slate-700">
-          {error}
-        </div>
-      )}
-
-      <div className="tw-mb-4 tw-bg-white tw-border tw-border-slate-200 tw-rounded-[1.25rem] tw-shadow-sm tw-p-4 md:tw-p-5">
-        <div className="tw-flex tw-flex-col tw-gap-4">
-          <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-x-6 tw-gap-y-2 tw-text-sm">
-            <div className="tw-text-slate-600">
-              <span className="tw-font-bold tw-text-slate-500">{t('hotTopics.currentCount')}：</span>
-              <span className="tw-font-black tw-text-slate-900">{filteredTopics.length}</span>
-            </div>
-            <div className="tw-text-slate-600">
-              <span className="tw-font-bold tw-text-slate-500">{t('hotTopics.lastAdded')}：</span>
-              <span className="tw-font-black tw-text-slate-900">{lastInsertedCount}</span>
-            </div>
+      {/* 极简无界内容区 */}
+      <div className="tw-bg-white tw-rounded-[2rem] tw-shadow-xl tw-shadow-slate-200/50 tw-overflow-hidden">
+        {/* 工具栏：紧凑布局 */}
+        <div className="tw-p-4 md:tw-p-6 tw-flex tw-flex-col lg:tw-flex-row lg:tw-items-center tw-gap-6">
+          <div className="tw-flex-1 tw-relative">
+            <Search className="tw-absolute tw-left-4 tw-top-1/2 tw--translate-y-1/2 tw-text-slate-300" size={18} />
+            <input
+              type="text"
+              placeholder={t('hotTopics.searchPlaceholder')}
+              className="tw-w-full tw-pl-12 tw-pr-4 tw-py-3 tw-bg-slate-50/50 tw-border-none tw-rounded-2xl tw-text-sm tw-font-medium tw-placeholder-slate-300 focus:tw-bg-white focus:tw-ring-2 focus:tw-ring-brand-500/10 tw-transition-all"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
           </div>
-
-          <div className="tw-flex tw-flex-col xl:tw-flex-row xl:tw-items-center tw-gap-3">
-            <div className="tw-relative tw-flex-1">
-              <Search className="tw-absolute tw-left-4 tw-top-1/2 tw--translate-y-1/2 tw-text-slate-400" size={18} />
-              <input
-                type="text"
-                placeholder={t('hotTopics.searchPlaceholder')}
-                className="tw-w-full tw-pl-12 tw-pr-4 tw-py-3 tw-bg-slate-50 tw-border tw-border-slate-200 focus:tw-bg-white focus:tw-border-slate-300 tw-rounded-xl tw-text-sm md:tw-text-base tw-font-medium tw-outline-none tw-transition-all"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-              />
-            </div>
-
-            <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-2">
+          
+          <div className="tw-flex tw-items-center tw-gap-2 tw-overflow-x-auto tw-scrollbar-none">
+            <button
+              onClick={() => setFilter('all')}
+              className={`tw-px-5 tw-py-2.5 tw-rounded-xl tw-text-xs tw-font-bold tw-transition-all ${filter === 'all' ? 'tw-bg-brand-500 tw-text-white tw-shadow-lg tw-shadow-brand-500/20' : 'tw-bg-slate-50 tw-text-slate-500 hover:tw-bg-slate-100'}`}
+            >
+              全部
+            </button>
+            {platforms.map(p => (
               <button
-                onClick={() => setFilter('all')}
-                className={`tw-px-4 tw-py-2 tw-text-sm tw-font-bold tw-rounded-xl tw-transition-all ${
-                  filter === 'all' ? 'tw-bg-slate-900 tw-text-white' : 'tw-bg-slate-100 tw-text-slate-600 hover:tw-bg-slate-200'
-                }`}
-                type="button"
+                key={p}
+                onClick={() => setFilter(p)}
+                className={`tw-px-5 tw-py-2.5 tw-rounded-xl tw-text-xs tw-font-bold tw-transition-all ${filter === p ? 'tw-bg-brand-500 tw-text-white tw-shadow-lg tw-shadow-brand-500/20' : 'tw-bg-slate-50 tw-text-slate-500 hover:tw-bg-slate-100'}`}
               >
-                {t('hotTopics.allData')}
+                {p}
               </button>
-              {platforms.map((platform) => (
-                <button
-                  key={platform}
-                  onClick={() => setFilter(platform)}
-                  className={`tw-px-4 tw-py-2 tw-text-sm tw-font-bold tw-rounded-xl tw-transition-all ${
-                    filter === platform ? 'tw-bg-slate-900 tw-text-white' : 'tw-bg-slate-100 tw-text-slate-600 hover:tw-bg-slate-200'
-                  }`}
-                  type="button"
-                >
-                  {platform}
-                </button>
-              ))}
-            </div>
-
-            <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3 xl:tw-ml-auto">
-              {loading ? (
-                <span className="tw-text-sm tw-font-bold tw-text-blue-600">{t('hotTopics.syncing')}</span>
-              ) : isCoolingDown ? (
-                <span className="tw-text-sm tw-font-bold tw-text-orange-500">
-                  {t('hotTopics.cooldownActive', { hours: cooldownHours, minutes: Math.max(cooldownMinutes, 1) })}
-                </span>
-              ) : (
-                <span className="tw-text-sm tw-font-bold tw-text-emerald-600">{t('hotTopics.refreshReady')}</span>
-              )}
-              <button
-                onClick={() => void loadHotTopics(true)}
-                disabled={loading || isCoolingDown}
-                className={`tw-px-5 tw-py-3 tw-text-sm tw-font-bold tw-rounded-xl tw-inline-flex tw-items-center tw-justify-center tw-gap-2 tw-transition-all ${
-                  loading || isCoolingDown
-                    ? 'tw-bg-slate-300 tw-text-white tw-cursor-not-allowed'
-                    : 'tw-bg-slate-900 tw-text-white hover:tw-bg-black'
-                }`}
-                type="button"
-              >
-                <RefreshCw size={16} className={loading ? 'tw-animate-spin' : ''} />
-                {loading ? t('hotTopics.syncing') : t('hotTopics.syncNow')}
-              </button>
-              <button
-                onClick={() => void deleteAndForceReload()}
-                disabled={loading}
-                className={`tw-px-5 tw-py-3 tw-text-sm tw-font-bold tw-rounded-xl tw-inline-flex tw-items-center tw-justify-center tw-gap-2 tw-transition-all ${
-                  loading
-                    ? 'tw-bg-slate-200 tw-text-slate-400 tw-cursor-not-allowed'
-                    : 'tw-bg-red-50 tw-text-red-600 tw-border tw-border-red-100 hover:tw-bg-red-100'
-                }`}
-                type="button"
-                title={t('hotTopics.deleteAndSyncTitle')}
-              >
-                <Trash2 size={16} />
-                {t('hotTopics.deleteAndSync')}
-              </button>
-            </div>
+            ))}
           </div>
         </div>
-      </div>
 
-      <div className="tw-bg-white tw-border tw-border-slate-200/60 tw-rounded-[1.5rem] tw-overflow-hidden tw-shadow-2xl tw-shadow-slate-200/50 tw-flex tw-flex-col">
-        <div className="tw-overflow-auto tw-max-h-[calc(100vh-320px)] tw-scrollbar-thin">
-          <table className="tw-w-full tw-text-left tw-border-collapse tw-min-w-[2300px] tw-table-fixed">
-            <thead className="tw-sticky tw-top-0 tw-z-20">
-              <tr className="tw-bg-slate-50 tw-border-b tw-border-slate-100">
-                <th className="tw-px-4 tw-py-4 tw-text-xs tw-font-black tw-text-slate-400 tw-uppercase tw-w-[72px] tw-sticky tw-left-0 tw-bg-slate-50 tw-z-30 tw-text-center">IDX</th>
-                <th className="tw-px-4 tw-py-4 tw-text-xs tw-font-black tw-text-slate-900 tw-uppercase tw-w-[180px] tw-bg-slate-100/70">{t('hotTopics.actions')}</th>
-                {mirrorColumns.map((column) => (
-                  <th
-                    key={column.key}
-                    className={`tw-px-4 tw-py-4 tw-text-xs tw-font-black tw-uppercase tw-tracking-wider ${getColumnStyle(column.group)}`}
-                    style={{ width: column.width }}
-                  >
-                    <div className="tw-flex tw-items-center tw-gap-1.5">
-                      {column.group === 'mirror' && <div className="tw-w-1 tw-h-1 tw-bg-slate-300 tw-rounded-full" />}
-                      {column.label}
-                    </div>
+        {/* 表格区：交替背景、紧凑行高、无边框线 */}
+        <div className="tw-overflow-auto tw-max-h-[calc(100vh-280px)] tw-scrollbar-thin">
+          <table className="tw-w-full tw-border-collapse tw-min-w-[2000px] tw-table-fixed">
+            <thead className="tw-sticky tw-top-0 tw-z-30 tw-bg-white/95 tw-backdrop-blur-sm">
+              <tr>
+                <th className="tw-w-16 tw-px-6 tw-py-4 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-text-center">#</th>
+                <th className="tw-w-28 tw-px-4 tw-py-4 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest">操作</th>
+                {mirrorColumns.map(col => (
+                  <th key={col.key} className="tw-px-4 tw-py-4 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest" style={{ width: col.width }}>
+                    {col.label}
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody className="tw-divide-y tw-divide-slate-50">
+            <tbody>
               {filteredTopics.length > 0 ? (
-                filteredTopics.map((topic, index) => (
-                  <tr key={`${topic.platform ?? 'topic'}-${topic.title ?? index}-${index}`} className="tw-group tw-even:tw-bg-slate-50/40 hover:tw-bg-blue-50/30 tw-transition-all">
-                    <td className="tw-px-4 tw-py-4 tw-text-xs tw-text-slate-400 tw-font-mono tw-sticky tw-left-0 tw-bg-inherit tw-z-10 tw-border-r tw-border-slate-100 group-hover:tw-bg-blue-50/50 tw-text-center">
-                      {String(index + 1).padStart(3, '0')}
+                filteredTopics.map((topic, idx) => (
+                  <tr 
+                    key={`${topic.platform}-${topic.title}-${idx}`} 
+                    className={`tw-group tw-transition-colors ${idx % 2 === 0 ? 'tw-bg-white' : 'tw-bg-slate-50/40'} hover:tw-bg-brand-50/30`}
+                  >
+                    <td className="tw-px-6 tw-py-3 tw-text-xs tw-font-mono tw-font-bold tw-text-slate-300 group-hover:tw-text-brand-400 tw-text-center">
+                      {String(idx + 1).padStart(2, '0')}
                     </td>
-                    <td className="tw-px-4 tw-py-4 tw-whitespace-nowrap">
+                    <td className="tw-px-4 tw-py-3">
                       <button
-                        type="button"
                         onClick={() => useTopicForAgent(topic)}
-                        className="tw-inline-flex tw-items-center tw-gap-2 tw-px-4 tw-py-2 tw-bg-slate-900 tw-text-white tw-rounded-xl tw-text-sm tw-font-bold tw-whitespace-nowrap hover:tw-bg-brand-600 tw-transition-all"
-                        title={t('hotTopics.generateTitle')}
+                        className="tw-flex tw-items-center tw-gap-2 tw-px-4 tw-py-1.5 tw-bg-white tw-border tw-border-slate-100 tw-rounded-lg tw-text-[11px] tw-font-bold tw-text-slate-600 hover:tw-border-brand-500 hover:tw-text-brand-500 tw-transition-all"
                       >
-                        <Wand2 size={14} />
-                        {t('hotTopics.generate')}
+                        <Wand2 size={12} />
+                        生成
                       </button>
                     </td>
-                    {mirrorColumns.map((column) => {
-                      const value = readTopicValue(topic, column.key);
-                      const isEmpty = value === null || value === undefined || value === '';
-
+                    {mirrorColumns.map(col => {
+                      const val = readTopicValue(topic, col.key);
+                      const empty = !val;
                       return (
-                        <td key={column.key} className="tw-px-4 tw-py-4">
-                          {column.key === 'platform' ? (
-                            <span className={`tw-px-3 tw-py-1 tw-rounded-lg tw-text-xs tw-font-bold tw-border ${getPlatformStyle(String(value || ''))}`}>
-                              {isEmpty ? t('hotTopics.unknownPlatform') : String(value)}
+                        <td key={col.key} className="tw-px-4 tw-py-3">
+                          {col.key === 'platform' ? (
+                            <span className={`tw-px-2 tw-py-0.5 tw-rounded-md tw-text-[10px] tw-font-bold ${getPlatformStyle(String(val))}`}>
+                              {val || '未知'}
                             </span>
-                          ) : column.key === 'title' ? (
-                            topic.url ? (
-                              <a
-                                href={String(topic.url)}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="tw-inline-flex tw-items-center tw-gap-1.5 tw-text-sm tw-text-slate-900 tw-font-bold hover:tw-text-blue-600 tw-transition-colors tw-max-w-full"
-                                title={String(value || '')}
-                              >
-                                <span className="tw-truncate tw-max-w-full">{isEmpty ? t('hotTopics.unnamedTopic') : String(value)}</span>
-                                <ExternalLink size={12} />
-                              </a>
-                            ) : (
-                              <div className="tw-text-sm tw-text-slate-900 tw-font-bold tw-truncate tw-max-w-full" title={String(value || '')}>
-                                {isEmpty ? t('hotTopics.unnamedTopic') : String(value)}
-                              </div>
-                            )
-                          ) : column.key === 'createdAt' ? (
-                            <div className={`tw-text-sm tw-font-medium ${isEmpty ? 'tw-text-slate-200' : 'tw-text-slate-500'}`} title={String(value || '')}>
-                              {isEmpty ? '-' : new Date(String(value)).toLocaleString()}
+                          ) : col.key === 'title' ? (
+                            <div className="tw-flex tw-items-center tw-gap-2 tw-max-w-full">
+                              <span className="tw-text-sm tw-font-bold tw-text-slate-700 tw-truncate" title={String(val)}>
+                                {val || '未命名话题'}
+                              </span>
+                              {topic.url && (
+                                <a href={topic.url} target="_blank" rel="noreferrer" className="tw-opacity-0 group-hover:tw-opacity-100 tw-text-slate-300 hover:tw-text-brand-500 tw-transition-all">
+                                  <ExternalLink size={12} />
+                                </a>
+                              )}
                             </div>
-                          ) : column.group === 'link' && !isEmpty ? (
-                            <a
-                              href={String(value)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="tw-inline-flex tw-items-center tw-gap-1.5 tw-text-blue-500 hover:tw-text-blue-700 tw-text-sm tw-font-bold tw-transition-colors"
-                            >
-                              {t('hotTopics.openResource')} <ExternalLink size={12} />
-                            </a>
+                          ) : col.key === 'createdAt' ? (
+                            <span className="tw-text-[11px] tw-font-medium tw-text-slate-400">
+                              {empty ? '-' : new Date(String(val)).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                            </span>
                           ) : (
-                            <div
-                              className={`tw-text-sm tw-font-medium tw-leading-6 tw-line-clamp-2 ${isEmpty ? 'tw-text-slate-200' : 'tw-text-slate-500'}`}
-                              title={String(value || '')}
-                            >
-                              {formatTopicPreview(value)}
+                            <div className={`tw-text-[11px] tw-font-medium tw-line-clamp-1 ${empty ? 'tw-text-slate-200' : 'tw-text-slate-500'}`}>
+                              {formatTopicPreview(val)}
                             </div>
                           )}
                         </td>
@@ -399,18 +317,46 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={mirrorColumns.length + 2} className="tw-px-8 tw-py-24 tw-text-center">
-                    <div className="tw-flex tw-flex-col tw-items-center tw-gap-3">
-                      <div className="tw-w-14 tw-h-14 tw-bg-slate-50 tw-rounded-full tw-flex tw-items-center tw-justify-center tw-text-slate-200">
-                        <Search size={26} />
+                  <td colSpan={mirrorColumns.length + 2} className="tw-py-32 tw-text-center">
+                    <div className="tw-flex tw-flex-col tw-items-center tw-gap-4">
+                      <div className="tw-h-16 tw-w-16 tw-bg-slate-50 tw-rounded-full tw-flex tw-items-center tw-justify-center tw-text-slate-200">
+                        <Search size={32} />
                       </div>
-                      <div className="tw-text-slate-300 tw-text-sm tw-font-bold">{t('hotTopics.emptyState')}</div>
+                      <p className="tw-text-sm tw-font-bold tw-text-slate-400">未发现匹配的热点话题</p>
                     </div>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* 极简页脚 */}
+        <div className="tw-px-6 tw-py-3 tw-bg-slate-50/30 tw-flex tw-items-center tw-justify-between">
+          <div className="tw-flex tw-items-center tw-gap-4">
+            <div className="tw-flex tw-items-center tw-gap-1.5 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase">
+              <LayoutGrid size={12} />
+              <span>Auto-sorted Matrix</span>
+            </div>
+            <div className="tw-flex tw-items-center tw-gap-1.5 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase">
+              <Globe size={12} />
+              <span>Global Sources</span>
+            </div>
+          </div>
+          <div className="tw-flex tw-items-center tw-gap-4">
+            <div className="tw-text-[10px] tw-font-bold tw-text-slate-400">
+              {loading ? <span className="tw-animate-pulse tw-text-brand-500">Syncing...</span> : 'Ready'}
+            </div>
+            <div className="tw-w-[1px] tw-h-3 tw-bg-slate-200" />
+            <button
+              onClick={() => void deleteAndForceReload()}
+              disabled={loading}
+              className="tw-text-[10px] tw-font-bold tw-text-slate-300 hover:tw-text-red-400 tw-transition-colors"
+              title="危险操作：清空所有热点数据"
+            >
+              重置数据库
+            </button>
+          </div>
         </div>
       </div>
     </div>

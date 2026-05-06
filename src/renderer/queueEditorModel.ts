@@ -1,4 +1,5 @@
 import type { ContentItem, DistributionTask } from '../shared/types';
+import { normalizePublishMediaPaths } from '../shared/mediaPaths';
 
 export function readTaskEditorDraft(task: DistributionTask, contents: ContentItem[] = []) {
   const payload = task.platformPayload ?? {};
@@ -6,7 +7,7 @@ export function readTaskEditorDraft(task: DistributionTask, contents: ContentIte
   const contentHtml = payloadContent || contents.find((item) => item.id === task.contentId)?.body || '';
 
   const mediaPaths = Array.isArray(payload.mediaPaths)
-    ? payload.mediaPaths.filter((item): item is string => typeof item === 'string')
+    ? normalizePublishMediaPaths(payload.mediaPaths)
     : [];
 
   return {

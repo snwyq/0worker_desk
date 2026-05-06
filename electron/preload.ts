@@ -52,9 +52,11 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
     update: (id: number, input: UpdateDistributionTaskInput) => ipcRenderer.invoke('distributionTasks:update', id, input),
     retry: (id: number) => ipcRenderer.invoke('distributionTasks:retry', id),
     cancel: (id: number) => ipcRenderer.invoke('distributionTasks:cancel', id),
+    delete: (id: number) => ipcRenderer.invoke('distributionTasks:delete', id),
     publishNow: (id: number) => ipcRenderer.invoke('distributionTasks:publishNow', id),
     retryMany: (ids: number[]) => ipcRenderer.invoke('distributionTasks:retryMany', ids),
     cancelMany: (ids: number[]) => ipcRenderer.invoke('distributionTasks:cancelMany', ids),
+    deleteMany: (ids: number[]) => ipcRenderer.invoke('distributionTasks:deleteMany', ids),
     returnToReview: (id: number, comment?: string) => ipcRenderer.invoke('distributionTasks:returnToReview', id, comment),
   },
   hotBaziTasks: {

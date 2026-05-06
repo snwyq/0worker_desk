@@ -272,7 +272,9 @@ function chunkArray<T>(items: T[], size: number) {
 
 function safeLog(...args: unknown[]) {
   try {
-    console.log(...args);
+    if (typeof process !== 'undefined' && process.stdout && !process.stdout.destroyed && !process.stdout.writableEnded) {
+      console.log(...args);
+    }
   } catch {}
 }
 

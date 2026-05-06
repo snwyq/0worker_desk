@@ -6,6 +6,9 @@ export interface ElementSnapshot {
   disabled?: boolean;
   hidden?: boolean;
   name?: string;
+  title?: string | null;
+  role?: string | null;
+  dataset?: Record<string, string>;
   text?: string;
 }
 
@@ -20,7 +23,19 @@ export function isWeiboComposePlaceholder(text: string | null | undefined) {
 
 export function isWeiboSendButtonElement(element: ElementSnapshot) {
   const text = normalizeText(element.text);
-  return text === '\u53d1\u9001' || text === '\u53d1\u5e03';
+  const title = normalizeText(element.title);
+  const ariaLabel = normalizeText(element.ariaLabel);
+  const role = normalizeText(element.role);
+  const datasetText = normalizeText([
+    element.dataset?.action,
+    element.dataset?.type,
+    element.dataset?.name,
+    element.dataset?.role,
+  ].filter(Boolean).join(' '));
+  const buttonText = text || title || ariaLabel || datasetText;
+  return buttonText === '\u53d1\u9001'
+    || buttonText === '\u53d1\u5e03'
+    || role === 'button' && (text.includes('\u53d1\u9001') || text.includes('\u53d1\u5e03'));
 }
 
 export function isDisabledElement(element: ElementSnapshot) {
