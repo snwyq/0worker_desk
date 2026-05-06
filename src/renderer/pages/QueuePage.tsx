@@ -41,6 +41,7 @@ import { readTaskEditorDraft } from '../queueEditorModel';
 import { htmlToPlainPreview } from '../textFormatting';
 import { normalizePublishMediaPaths } from '../../shared/mediaPaths';
 
+
 const taskFilters: Array<{ id: 'all' | PostStatus; label: string }> = [
   { id: 'all', label: '全部状态' },
   { id: 'queued', label: '队列中' },
@@ -69,6 +70,7 @@ export function QueuePage() {
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
   const [busyReviewId, setBusyReviewId] = useState<number | null>(null);
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null);
+
   
   // Form State
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
@@ -503,6 +505,7 @@ export function QueuePage() {
         </div>
       </div>
 
+
       {reviewItems.length > 0 && (
         <div className="tw-bg-white tw-rounded-[32px] tw-border tw-border-slate-100 tw-shadow-sm tw-overflow-hidden">
           <div className="tw-px-8 tw-py-5 tw-border-b tw-border-slate-50 tw-flex tw-items-center tw-justify-between">
@@ -789,6 +792,7 @@ export function QueuePage() {
 
                       <div className="tw-p-6 tw-bg-white/80 tw-rounded-[28px] tw-border tw-border-slate-100 tw-backdrop-blur-md tw-shadow-sm">
                          <p className="tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-mb-4">实时任务快照</p>
+
                          <div className="tw-flex tw-items-center tw-gap-3">
                             <div className="tw-w-10 tw-h-10 tw-bg-emerald-50 tw-text-emerald-600 tw-rounded-xl tw-flex tw-items-center tw-justify-center">
                                <CheckCircle2 size={18} />

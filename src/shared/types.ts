@@ -63,6 +63,39 @@ export interface AiWorkflowRun {
   finishedAt: string;
 }
 
+export interface PublishingStrategy {
+  id: string;
+  workflowCode: string;
+  name: string;
+  maxDailyPosts: number;
+  minIntervalMins: number;
+  activeTimeRangesJson: string[][]; // e.g. [['08:00', '11:00'], ['14:00', '22:00']]
+  jitterMins: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreatePublishingStrategyInput {
+  id?: string;
+  workflowCode: string;
+  name: string;
+  maxDailyPosts?: number;
+  minIntervalMins?: number;
+  activeTimeRangesJson?: string[][];
+  jitterMins?: number;
+  isActive?: boolean;
+}
+
+export interface UpdatePublishingStrategyInput {
+  name?: string;
+  maxDailyPosts?: number;
+  minIntervalMins?: number;
+  activeTimeRangesJson?: string[][];
+  jitterMins?: number;
+  isActive?: boolean;
+}
+
 export interface CreateAccountInput {
   name: string;
   platform: PlatformCode;
@@ -289,6 +322,106 @@ export interface DistributionTask {
   lastError: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DispatchRuleProfile {
+  id: number;
+  name: string;
+  description: string;
+  pluginCode: string;
+  workflowCode: string;
+  styleId: string;
+  source: string;
+  enqueueSource: string;
+  dailyLimit: number;
+  minIntervalMinutes: number;
+  timeWindowStart: string;
+  timeWindowEnd: string;
+  priority: number;
+  enabled: boolean;
+  cadencePreset: DispatchCadencePreset;
+  weeklyLimit: number;
+  jitterMinutes: number;
+  windows: DispatchWindow[];
+  quietHours: DispatchQuietHour[];
+  blackoutDates: string[];
+  sameStyleMinGapMinutes: number;
+  onConflict: DispatchConflictStrategy;
+  sourceColumnIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DispatchCadencePreset = 'low' | 'normal' | 'high' | 'intensive' | 'custom';
+
+export type DispatchConflictStrategy = 'defer' | 'preempt' | 'drop' | 'returnToReview';
+
+export interface DispatchWindow {
+  label: string;
+  weekdays: number[]; // ISO 1-7 (Mon=1..Sun=7)
+  start: string; // "HH:MM"
+  end: string;   // "HH:MM"
+  weight: number;
+}
+
+export interface DispatchQuietHour {
+  weekdays: number[]; // ISO 1-7; empty = all days
+  start: string;
+  end: string;
+}
+
+export interface SourceColumn {
+  id: string;
+  label: string;
+  description: string;
+  pluginCode: string;
+  workflowCode: string;
+  styleId: string;
+  source: string;
+  enqueueSource: string;
+  sortIndex: number;
+  builtin: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DispatchSimulationEntry {
+  scheduledAt: string;
+  windowLabel: string;
+  weight: number;
+  penalty: number;
+  explanation: string;
+}
+
+export interface CreateDispatchRuleProfileInput {
+  name: string;
+  description?: string;
+  pluginCode?: string;
+  workflowCode?: string;
+  styleId?: string;
+  source?: string;
+  enqueueSource?: string;
+  dailyLimit?: number;
+  minIntervalMinutes?: number;
+  timeWindowStart?: string;
+  timeWindowEnd?: string;
+  priority?: number;
+  enabled?: boolean;
+  cadencePreset?: DispatchCadencePreset;
+  weeklyLimit?: number;
+  jitterMinutes?: number;
+  windows?: DispatchWindow[];
+  quietHours?: DispatchQuietHour[];
+  blackoutDates?: string[];
+  sameStyleMinGapMinutes?: number;
+  onConflict?: DispatchConflictStrategy;
+  sourceColumnIds?: string[];
+}
+
+export interface UpdateDispatchRuleProfileInput extends Partial<CreateDispatchRuleProfileInput> { }
+
+export interface AssignScheduleOptions {
+  nowIso?: string;
 }
 
 export interface CreateDistributionTaskInput {

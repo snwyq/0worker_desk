@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Database, Globe, Languages, RefreshCcw, Save, Settings, Sparkles, Terminal } from 'lucide-react';
+import { AlertTriangle, CalendarClock, CheckCircle2, Database, Globe, Languages, RefreshCcw, Save, Settings, Sparkles, Terminal, Trash2, Plus } from 'lucide-react';
 
-import type { AppSetting, BrowserMode, UpdateCheckResult, UpdateConfig } from '../../shared/types';
+import type { AppSetting, BrowserMode, DispatchRuleProfile, UpdateCheckResult, UpdateConfig, AiWorkflow, PublishingStrategy } from '../../shared/types';
 import { appApi } from '../api';
+import { PublishingStrategyCard } from '../components/PublishingStrategyCard';
+import { SchedulingSandbox } from '../components/SchedulingSandbox';
 
 const browserModes: { id: BrowserMode; label: string; desc: string }[] = [
   { id: 'adspower', label: 'AdsPower（推荐）', desc: '用于多账号指纹环境和自动化接管。' },
@@ -40,26 +42,105 @@ function isSecretSetting(key: string) {
 }
 
 export function SettingsPage() {
+  const [activeTab, setActiveTab] = useState<'general' | 'integration' | 'content'>('general');
   const [settings, setSettings] = useState<AppSetting[]>([]);
+  const [dispatchRules, setDispatchRules] = useState<DispatchRuleProfile[]>([]);
+  const [workflows, setWorkflows] = useState<AiWorkflow[]>([]);
+  const [selectedWorkflowCode, setSelectedWorkflowCode] = useState<string>('');
+  const [strategy, setStrategy] = useState<PublishingStrategy | null>(null);
+  
   const [updateConfig, setUpdateConfig] = useState<UpdateConfig | null>(null);
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const [isWorkflowModalOpen, setIsWorkflowModalOpen] = useState(false);
+  const [editingWorkflow, setEditingWorkflow] = useState<AiWorkflow | null>(null);
+  const [workflowDraft, setWorkflowDraft] = useState({ name: '', code: '' });
+
+  const [ruleDraft, setRuleDraft] = useState({
+    name: '',
+    description: '',
+    pluginCode: '',
+    workflowCode: '',
+    styleId: '',
+    source: '',
+    enqueueSource: '',
+    dailyLimit: '5',
+    minIntervalMinutes: '60',
+    timeWindowStart: '09:00',
+    timeWindowEnd: '23:00',
+    priority: '50',
+  });
 
   async function refresh() {
-    const [nextSettings, nextUpdateStatus] = await Promise.all([
-      appApi.settings.list(),
-      appApi.updates.status(),
-    ]);
-    setSettings(nextSettings);
-    setUpdateConfig(nextUpdateStatus.config);
-    setDraftValues(Object.fromEntries(nextSettings.map((setting) => [setting.key, setting.value])));
+    setLoading(true);
+    try {
+      const [nextSettings, nextUpdateStatus, nextDispatchRules, plugins] = await Promise.all([
+        appApi.settings.list(),
+        appApi.updates.status(),
+        appApi.dispatchRules.list(),
+        appApi.ai.listPlugins()
+      ]);
+
+      // 聚合所有 Workflow
+      const allWorkflows: AiWorkflow[] = [];
+      for (const plugin of plugins) {
+        const wfs = await appApi.ai.listWorkflows(plugin.code);
+        allWorkflows.push(...wfs);
+      }
+      
+      setSettings(nextSettings);
+      setUpdateConfig(nextUpdateStatus.config);
+      setDispatchRules(nextDispatchRules);
+      setWorkflows(allWorkflows);
+      setDraftValues(Object.fromEntries(nextSettings.map((setting) => [setting.key, setting.value])));
+      
+      if (allWorkflows.length > 0 && !selectedWorkflowCode) {
+        setSelectedWorkflowCode(allWorkflows[0].code);
+      }
+    } catch (err) {
+      setError('数据同步失败');
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
     void refresh();
   }, []);
+
+  // 当选择的 Workflow 改变时加载策略
+  useEffect(() => {
+    if (activeTab === 'content' && selectedWorkflowCode) {
+      const loadStrategy = async () => {
+        try {
+          const existing = await appApi.publishingStrategies.findByWorkflow(selectedWorkflowCode);
+          if (existing) {
+            setStrategy(existing);
+          } else {
+            setStrategy({
+              id: '',
+              workflowCode: selectedWorkflowCode,
+              name: workflows.find(w => w.code === selectedWorkflowCode)?.name || '默认策略',
+              maxDailyPosts: 12,
+              minIntervalMins: 60,
+              jitterMins: 15,
+              activeTimeRangesJson: [['08:00', '22:00']],
+              isActive: true,
+              createdAt: '',
+              updatedAt: ''
+            });
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      };
+      loadStrategy();
+    }
+  }, [selectedWorkflowCode, activeTab, workflows]);
 
   const enabledModes = useMemo(
     () => (draftValues['ui.enabledBrowserModes'] || '').split(',').filter(Boolean) as BrowserMode[],
@@ -111,247 +192,546 @@ export function SettingsPage() {
     setDraftValues((prev) => ({ ...prev, [key]: value }));
   }
 
+  function updateRuleDraft(key: keyof typeof ruleDraft, value: string) {
+    setRuleDraft((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function saveRule() {
+    setError('');
+    try {
+      await appApi.dispatchRules.create({
+        ...ruleDraft,
+        dailyLimit: Number(ruleDraft.dailyLimit) || 0,
+        minIntervalMinutes: Number(ruleDraft.minIntervalMinutes) || 0,
+        priority: Number(ruleDraft.priority) || 0,
+        enabled: true,
+      });
+      setRuleDraft({
+        name: '',
+        description: '',
+        pluginCode: '',
+        workflowCode: '',
+        styleId: '',
+        source: '',
+        enqueueSource: '',
+        dailyLimit: '5',
+        minIntervalMinutes: '60',
+        timeWindowStart: '09:00',
+        timeWindowEnd: '23:00',
+        priority: '50',
+      });
+      setSuccess('调度规则已保存。');
+      setTimeout(() => setSuccess(''), 2000);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function toggleRule(rule: DispatchRuleProfile) {
+    await appApi.dispatchRules.toggle(rule.id, !rule.enabled);
+    await refresh();
+  }
+
+  async function deleteRule(rule: DispatchRuleProfile) {
+    if (!window.confirm(`确认删除调度规则“${rule.name}”？`)) return;
+    await appApi.dispatchRules.delete(rule.id);
+    await refresh();
+  }
+
+  async function handleSaveWorkflow() {
+    if (!workflowDraft.name || !workflowDraft.code) {
+      setError('名称和编码不能为空');
+      return;
+    }
+    try {
+      await appApi.ai.upsertWorkflow({
+        pluginCode: 'system', // 默认系统级
+        code: workflowDraft.code,
+        name: workflowDraft.name,
+        definitionJson: '{}'
+      });
+      setIsWorkflowModalOpen(false);
+      setSuccess('栏目库已更新');
+      await refresh();
+    } catch (err) {
+      setError('保存栏目失败');
+    }
+  }
+
+  async function handleDeleteWorkflow(wf: AiWorkflow) {
+    if (!window.confirm(`确认删除栏目“${wf.name}”及其所有排期策略吗？此操作不可撤销。`)) return;
+    try {
+      // 假设后端有 deleteWorkflow
+      if ((appApi.ai as any).deleteWorkflow) {
+        await (appApi.ai as any).deleteWorkflow(wf.code);
+      }
+      setSuccess('栏目已删除');
+      if (selectedWorkflowCode === wf.code) setSelectedWorkflowCode('');
+      await refresh();
+    } catch (err) {
+      setError('删除失败');
+    }
+  }
+
+  async function handleSaveStrategy() {
+    if (!strategy) return;
+    try {
+      await appApi.publishingStrategies.upsert({
+        workflowCode: strategy.workflowCode,
+        name: strategy.name,
+        maxDailyPosts: strategy.maxDailyPosts,
+        minIntervalMins: strategy.minIntervalMins,
+        jitterMins: strategy.jitterMins,
+        activeTimeRangesJson: strategy.activeTimeRangesJson,
+        isActive: strategy.isActive
+      });
+      setSuccess('内容发布策略已更新。');
+      setTimeout(() => setSuccess(''), 2000);
+    } catch (err) {
+      setError('策略保存失败');
+    }
+  }
+
   const hothubKey = getSettingValue(settings, 'ai.tophubKey');
   const dashscopeKey = getSettingValue(settings, 'ai.dashscopeKey');
   const apiyiKey = getSettingValue(settings, 'ai.apiyiKey') || getSettingValue(settings, 'ai.apiYiKey');
 
+  const tabs = [
+    { id: 'general', label: '常规设置', icon: Settings },
+    { id: 'integration', label: '服务集成', icon: Sparkles },
+    { id: 'content', label: '内容设置', icon: CalendarClock },
+  ] as const;
+
   return (
-    <div className="tw-space-y-8 tw-animate-fade-in">
-      <div className="tw-flex tw-flex-col xl:tw-flex-row xl:tw-items-end xl:tw-justify-between tw-gap-5">
-        <div>
-          <div className="tw-flex tw-items-center tw-gap-2 tw-mb-3">
-            <Settings size={16} className="tw-text-brand-500" />
-            <span className="tw-text-[10px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-[0.35em]">Platform Control</span>
+    <div className="tw-space-y-10 tw-animate-fade-in">
+      {/* Header with Tabs */}
+      <div className="tw-flex tw-flex-col tw-gap-8">
+        <div className="tw-flex tw-flex-col xl:tw-flex-row xl:tw-items-end xl:tw-justify-between tw-gap-5">
+          <div>
+            <div className="tw-flex tw-items-center tw-gap-2 tw-mb-3">
+              <Settings size={16} className="tw-text-brand-500" />
+              <span className="tw-text-[10px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-[0.35em]">Platform Control</span>
+            </div>
+            <h1 className="tw-text-3xl tw-font-bold tw-text-slate-900 tw-tracking-tight">系统设置</h1>
           </div>
-          <h1 className="tw-text-3xl tw-font-bold tw-text-slate-900 tw-tracking-tight">系统设置</h1>
-          <p className="tw-text-slate-500 tw-text-sm tw-mt-2">
-            管理模型、热榜、浏览器、调度器和开发配置，作为所有客户插件的默认运行底座。
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          className="tw-inline-flex tw-items-center tw-gap-2 tw-px-4 tw-py-2.5 tw-bg-white tw-border tw-border-slate-200 tw-text-slate-600 tw-text-[11px] tw-font-bold tw-rounded-xl hover:tw-bg-slate-50 tw-transition-all tw-shadow-sm"
-        >
-          <RefreshCcw size={14} />
-          刷新设置
-        </button>
-      </div>
-
-      {error && (
-        <div className="tw-bg-red-50 tw-border tw-border-red-100 tw-text-red-600 tw-p-4 tw-rounded-2xl tw-text-sm tw-flex tw-items-center tw-gap-3">
-          <AlertTriangle size={18} />
-          {error}
-        </div>
-      )}
-
-      {success && (
-        <div className="tw-bg-emerald-50 tw-border tw-border-emerald-100 tw-text-emerald-600 tw-p-4 tw-rounded-2xl tw-text-sm tw-flex tw-items-center tw-gap-3">
-          <CheckCircle2 size={18} />
-          {success}
-        </div>
-      )}
-
-      <div className="tw-grid tw-grid-cols-1 xl:tw-grid-cols-2 tw-gap-8">
-        <section className="tw-bg-white tw-rounded-2xl tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm">
-          <div className="tw-flex tw-items-center tw-gap-4 tw-mb-8">
-            <div className="tw-p-3 tw-bg-blue-50 tw-text-blue-600 tw-rounded-2xl">
-              <Languages size={24} />
-            </div>
-            <div>
-              <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">基础偏好</h2>
-              <p className="tw-text-xs tw-text-slate-400">控制工作台语言和常用交互偏好。</p>
-            </div>
-          </div>
-          <div className="tw-flex tw-items-center tw-justify-between tw-p-4 tw-bg-slate-50/50 tw-rounded-2xl tw-border tw-border-slate-50">
-            <div>
-              <p className="tw-text-sm tw-font-bold tw-text-slate-700">界面语言</p>
-              <p className="tw-text-[11px] tw-text-slate-400">选择运营工作台显示语言。</p>
-            </div>
-            <select
-              value={draftValues['ui.language'] || 'zh'}
-              onChange={(event) => void changeLanguage(event.target.value)}
-              className="tw-bg-white tw-border tw-border-slate-200 tw-px-4 tw-py-2 tw-rounded-xl tw-text-sm tw-font-bold tw-shadow-sm focus:tw-outline-none focus:tw-ring-4 focus:tw-ring-brand-500/10"
-            >
-              <option value="zh">简体中文</option>
-              <option value="en">English</option>
-            </select>
-          </div>
-        </section>
-
-        <section className="tw-bg-white tw-rounded-2xl tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm">
-          <div className="tw-flex tw-items-center tw-gap-4 tw-mb-8">
-            <div className="tw-p-3 tw-bg-cyan-50 tw-text-cyan-600 tw-rounded-2xl">
-              <Globe size={24} />
-            </div>
-            <div>
-              <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">浏览器环境</h2>
-              <p className="tw-text-xs tw-text-slate-400">控制账号页可以选择的浏览器连接方式。</p>
-            </div>
-          </div>
-          <div className="tw-space-y-3">
-            {browserModes.map((mode) => {
-              const isChecked = enabledModes.includes(mode.id);
+          <div className="tw-flex tw-bg-slate-100 tw-p-1 tw-rounded-2xl tw-w-fit">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
               return (
-                <label key={mode.id} className={`tw-flex tw-items-center tw-justify-between tw-gap-4 tw-p-4 tw-rounded-2xl tw-border tw-transition-all tw-cursor-pointer ${isChecked ? 'tw-bg-brand-50/30 tw-border-brand-100' : 'tw-bg-slate-50/50 tw-border-transparent hover:tw-bg-slate-50'}`}>
-                  <span>
-                    <span className="tw-block tw-text-sm tw-font-bold tw-text-slate-700">{mode.label}</span>
-                    <span className="tw-block tw-text-[11px] tw-text-slate-400 tw-mt-1">{mode.desc}</span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={isChecked}
-                    onChange={(event) => void toggleBrowserMode(mode.id, event.target.checked)}
-                    className="tw-w-5 tw-h-5 tw-accent-brand-600"
-                  />
-                </label>
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`tw-flex tw-items-center tw-gap-2 tw-px-6 tw-py-2.5 tw-rounded-xl tw-text-sm tw-font-black tw-transition-all ${
+                    isActive 
+                      ? 'tw-bg-white tw-text-slate-900 tw-shadow-sm' 
+                      : 'tw-text-slate-400 hover:tw-text-slate-600'
+                  }`}
+                >
+                  <Icon size={16} />
+                  {tab.label}
+                </button>
               );
             })}
           </div>
-        </section>
-
-        <section className="tw-bg-white tw-rounded-2xl tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm xl:tw-col-span-2">
-          <div className="tw-flex tw-items-center tw-gap-4 tw-mb-8">
-            <div className="tw-p-3 tw-bg-purple-50 tw-text-purple-600 tw-rounded-2xl">
-              <Sparkles size={24} />
-            </div>
-            <div>
-              <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">AI 与热榜服务</h2>
-              <p className="tw-text-xs tw-text-slate-400">模型 Key、图片生成 Key 和 TopHub 热点源会被 Agent 工作流统一使用。</p>
-            </div>
-          </div>
-
-          <div className="tw-grid tw-grid-cols-1 lg:tw-grid-cols-3 tw-gap-4 tw-mb-8">
-            <div className="tw-rounded-2xl tw-bg-slate-50 tw-border tw-border-slate-100 tw-p-4">
-              <p className="tw-text-[10px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest">DashScope</p>
-              <p className="tw-text-sm tw-font-black tw-text-slate-800 tw-mt-2">{dashscopeKey ? '已配置' : '未配置'}</p>
-            </div>
-            <div className="tw-rounded-2xl tw-bg-slate-50 tw-border tw-border-slate-100 tw-p-4">
-              <p className="tw-text-[10px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest">APIYi</p>
-              <p className="tw-text-sm tw-font-black tw-text-slate-800 tw-mt-2">{apiyiKey ? '已配置' : '未配置'}</p>
-            </div>
-            <div className="tw-rounded-2xl tw-bg-slate-50 tw-border tw-border-slate-100 tw-p-4">
-              <p className="tw-text-[10px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest">TopHub</p>
-              <p className="tw-text-sm tw-font-black tw-text-slate-800 tw-mt-2">{hothubKey ? '已配置' : '未配置'}</p>
-            </div>
-          </div>
-
-          <div className="tw-grid tw-grid-cols-1 lg:tw-grid-cols-2 tw-gap-6">
-            {['ai.dashscopeKey', 'ai.apiyiKey', 'ai.apiYiKey', 'ai.tophubKey', 'ai.tophubBaseUrl'].map((key) => (
-              <div key={key} className="tw-space-y-2">
-                <label className="tw-text-xs tw-font-bold tw-text-slate-500 tw-ml-1">{settingLabels[key] || key}</label>
-                <div className="tw-flex tw-gap-2">
-                  <input
-                    type={isSecretSetting(key) ? 'password' : 'text'}
-                    value={draftValues[key] ?? ''}
-                    onChange={(event) => updateDraft(key, event.target.value)}
-                    className="tw-flex-1 tw-min-w-0 tw-bg-slate-50 tw-border tw-border-slate-100 tw-px-4 tw-py-2.5 tw-rounded-xl tw-text-sm tw-font-mono focus:tw-bg-white focus:tw-ring-4 focus:tw-ring-brand-500/10 tw-outline-none"
-                    placeholder={isSecretSetting(key) ? 'sk-...' : 'https://...'}
-                  />
-                  <button type="button" onClick={() => void saveSetting(key)} className="tw-px-4 tw-bg-slate-100 tw-text-slate-600 tw-rounded-xl hover:tw-bg-brand-500 hover:tw-text-white tw-transition-all" title="保存">
-                    <Save size={16} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="tw-bg-white tw-rounded-2xl tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm">
-          <div className="tw-flex tw-items-center tw-gap-4 tw-mb-8">
-            <div className="tw-p-3 tw-bg-amber-50 tw-text-amber-600 tw-rounded-2xl">
-              <RefreshCcw size={24} />
-            </div>
-            <div>
-              <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">版本更新</h2>
-              <p className="tw-text-xs tw-text-slate-400">检查桌面应用更新和发布通道。</p>
-            </div>
-          </div>
-          <div className="tw-space-y-2 tw-mb-6">
-            <div className="tw-flex tw-items-center tw-justify-between tw-py-3 tw-px-1">
-              <span className="tw-text-sm tw-font-medium tw-text-slate-400">当前版本</span>
-              <span className="tw-text-sm tw-font-bold tw-text-slate-900 tw-bg-slate-50 tw-px-3 tw-py-1 tw-rounded-lg">{updateResult?.currentVersion || 'v1.0.0-mvp'}</span>
-            </div>
-            <div className="tw-flex tw-items-center tw-justify-between tw-py-3 tw-px-1">
-              <span className="tw-text-sm tw-font-medium tw-text-slate-400">更新状态</span>
-              <span className="tw-text-xs tw-font-bold tw-text-emerald-500">{updateResult?.message || '等待检查'}</span>
-            </div>
-            <div className="tw-text-[11px] tw-text-slate-400 tw-bg-slate-50 tw-rounded-xl tw-p-3">
-              仓库：{updateConfig?.owner || draftValues['updates.owner'] || '-'} / {updateConfig?.repo || draftValues['updates.repo'] || '-'}，通道：{updateConfig?.channel || draftValues['updates.channel'] || 'latest'}
-            </div>
-          </div>
-          <button type="button" onClick={checkUpdates} className="tw-w-full tw-px-6 tw-py-4 tw-bg-slate-900 tw-text-white tw-rounded-2xl tw-text-sm tw-font-bold hover:tw-bg-brand-600 tw-shadow-xl tw-shadow-slate-200 tw-transition-all active:tw-scale-95">
-            检查更新
-          </button>
-        </section>
-
-        <section className="tw-bg-amber-50 tw-rounded-2xl tw-border tw-border-amber-100 tw-p-8 tw-flex tw-flex-col tw-justify-between tw-gap-6">
-          <div className="tw-flex tw-items-center tw-gap-4">
-            <div className="tw-p-3 tw-bg-amber-500 tw-text-white tw-rounded-2xl tw-shadow-lg tw-shadow-amber-200">
-              <RefreshCcw size={24} />
-            </div>
-            <div>
-              <h2 className="tw-text-lg tw-font-bold tw-text-amber-900">开发者操作</h2>
-              <p className="tw-text-sm tw-text-amber-700/70">主进程、Preload 或本地服务配置变更后，可以重启应用让配置生效。</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              if (window.confirm('确认重启应用吗？未保存的页面状态会丢失。')) {
-                appApi.app.relaunch();
-              }
-            }}
-            className="tw-px-8 tw-py-4 tw-bg-amber-500 tw-text-white tw-rounded-2xl tw-font-bold tw-text-sm tw-shadow-xl tw-shadow-amber-200 hover:tw-bg-amber-600 tw-transition-all active:tw-scale-95"
-          >
-            立即重启应用
-          </button>
-        </section>
-      </div>
-
-      <section className="tw-bg-white tw-rounded-2xl tw-border tw-border-slate-100 tw-overflow-hidden tw-shadow-sm">
-        <div className="tw-p-8 tw-border-b tw-border-slate-50 tw-flex tw-items-center tw-gap-4">
-          <div className="tw-p-3 tw-bg-slate-900 tw-text-white tw-rounded-2xl">
-            <Terminal size={24} />
-          </div>
-          <div>
-            <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">高级配置</h2>
-            <p className="tw-text-xs tw-text-slate-400">直接编辑 App Settings 表，仅用于排障、集成和部署配置。</p>
-          </div>
         </div>
 
-        <div className="tw-divide-y tw-divide-slate-50">
-          {settings.map((setting) => (
-            <div key={setting.key} className="tw-p-6 hover:tw-bg-slate-50/30 tw-transition-all">
-              <div className="tw-flex tw-flex-col xl:tw-flex-row xl:tw-items-center tw-gap-6">
-                <div className="tw-flex-1 tw-min-w-0">
-                  <span className="tw-text-[10px] tw-font-bold tw-bg-slate-100 tw-text-slate-500 tw-px-2 tw-py-0.5 tw-rounded-md tw-font-mono tw-tracking-tight">
-                    {setting.key}
-                  </span>
-                  <p className="tw-text-xs tw-text-slate-500 tw-font-bold tw-mt-3">{settingLabels[setting.key] || '自定义设置'}</p>
-                  <p className="tw-text-xs tw-text-slate-400 tw-mt-1">{setting.description || '暂无说明，修改前请确认调用方含义。'}</p>
+        {error && (
+          <div className="tw-bg-red-50 tw-border tw-border-red-100 tw-text-red-600 tw-p-4 tw-rounded-2xl tw-text-sm tw-flex tw-items-center tw-gap-3">
+            <AlertTriangle size={18} />
+            {error}
+          </div>
+        )}
+
+        {success && (
+          <div className="tw-bg-emerald-50 tw-border tw-border-emerald-100 tw-text-emerald-600 tw-p-4 tw-rounded-2xl tw-text-sm tw-flex tw-items-center tw-gap-3">
+            <CheckCircle2 size={18} />
+            {success}
+          </div>
+        )}
+      </div>
+
+      <div className="tw-grid tw-grid-cols-1 tw-gap-8">
+        {activeTab === 'general' && (
+          <div className="tw-grid tw-grid-cols-1 xl:tw-grid-cols-2 tw-gap-8">
+            <section className="tw-bg-white tw-rounded-2xl tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm">
+              <div className="tw-flex tw-items-center tw-gap-4 tw-mb-8">
+                <div className="tw-p-3 tw-bg-blue-50 tw-text-blue-600 tw-rounded-2xl">
+                  <Languages size={24} />
                 </div>
-                <div className="tw-flex tw-flex-col sm:tw-flex-row sm:tw-items-center tw-gap-3">
-                  <input
-                    type={isSecretSetting(setting.key) ? 'password' : 'text'}
-                    value={draftValues[setting.key] ?? ''}
-                    onChange={(event) => updateDraft(setting.key, event.target.value)}
-                    className="tw-w-full sm:tw-w-[360px] tw-bg-slate-50 tw-border tw-border-slate-100 tw-px-4 tw-py-2.5 tw-rounded-xl tw-text-sm tw-font-mono focus:tw-bg-white focus:tw-outline-none focus:tw-ring-4 focus:tw-ring-brand-500/10"
+                <div>
+                  <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">基础偏好</h2>
+                  <p className="tw-text-xs tw-text-slate-400">控制工作台语言和常用交互偏好。</p>
+                </div>
+              </div>
+              <div className="tw-flex tw-items-center tw-justify-between tw-p-4 tw-bg-slate-50/50 tw-rounded-2xl tw-border tw-border-slate-50">
+                <div>
+                  <p className="tw-text-sm tw-font-bold tw-text-slate-700">界面语言</p>
+                  <p className="tw-text-[11px] tw-text-slate-400">选择运营工作台显示语言。</p>
+                </div>
+                <select
+                  value={draftValues['ui.language'] || 'zh'}
+                  onChange={(event) => void changeLanguage(event.target.value)}
+                  className="tw-bg-white tw-border tw-border-slate-200 tw-px-4 tw-py-2 tw-rounded-xl tw-text-sm tw-font-bold tw-shadow-sm focus:tw-outline-none focus:tw-ring-4 focus:tw-ring-brand-500/10"
+                >
+                  <option value="zh">简体中文</option>
+                  <option value="en">English</option>
+                </select>
+              </div>
+            </section>
+
+            <section className="tw-bg-white tw-rounded-2xl tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm">
+              <div className="tw-flex tw-items-center tw-gap-4 tw-mb-8">
+                <div className="tw-p-3 tw-bg-cyan-50 tw-text-cyan-600 tw-rounded-2xl">
+                  <Globe size={24} />
+                </div>
+                <div>
+                  <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">浏览器环境</h2>
+                  <p className="tw-text-xs tw-text-slate-400">控制账号页可以选择的浏览器连接方式。</p>
+                </div>
+              </div>
+              <div className="tw-space-y-3">
+                {browserModes.map((mode) => {
+                  const isChecked = enabledModes.includes(mode.id);
+                  return (
+                    <label key={mode.id} className={`tw-flex tw-items-center tw-justify-between tw-gap-4 tw-p-4 tw-rounded-2xl tw-border tw-transition-all tw-cursor-pointer ${isChecked ? 'tw-bg-brand-50/30 tw-border-brand-100' : 'tw-bg-slate-50/50 tw-border-transparent hover:tw-bg-slate-50'}`}>
+                      <span>
+                        <span className="tw-block tw-text-sm tw-font-bold tw-text-slate-700">{mode.label}</span>
+                        <span className="tw-block tw-text-[11px] tw-text-slate-400 tw-mt-1">{mode.desc}</span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(event) => void toggleBrowserMode(mode.id, event.target.checked)}
+                        className="tw-w-5 tw-h-5 tw-accent-brand-600"
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="tw-bg-white tw-rounded-2xl tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm">
+              <div className="tw-flex tw-items-center tw-gap-4 tw-mb-8">
+                <div className="tw-p-3 tw-bg-amber-50 tw-text-amber-600 tw-rounded-2xl">
+                  <RefreshCcw size={24} />
+                </div>
+                <div>
+                  <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">版本更新</h2>
+                  <p className="tw-text-xs tw-text-slate-400">检查桌面应用更新和发布通道。</p>
+                </div>
+              </div>
+              <div className="tw-space-y-2 tw-mb-6">
+                <div className="tw-flex tw-items-center tw-justify-between tw-py-3 tw-px-1">
+                  <span className="tw-text-sm tw-font-medium tw-text-slate-400">当前版本</span>
+                  <span className="tw-text-sm tw-font-bold tw-text-slate-900 tw-bg-slate-50 tw-px-3 tw-py-1 tw-rounded-lg">{updateResult?.currentVersion || 'v1.0.0-mvp'}</span>
+                </div>
+                <div className="tw-flex tw-items-center tw-justify-between tw-py-3 tw-px-1">
+                  <span className="tw-text-sm tw-font-medium tw-text-slate-400">更新状态</span>
+                  <span className="tw-text-xs tw-font-bold tw-text-emerald-500">{updateResult?.message || '等待检查'}</span>
+                </div>
+              </div>
+              <button type="button" onClick={checkUpdates} className="tw-w-full tw-px-6 tw-py-4 tw-bg-slate-900 tw-text-white tw-rounded-2xl tw-text-sm tw-font-bold hover:tw-bg-brand-600 tw-shadow-xl tw-shadow-slate-200 tw-transition-all active:tw-scale-95">
+                检查更新
+              </button>
+            </section>
+
+            <section className="tw-bg-amber-50 tw-rounded-2xl tw-border tw-border-amber-100 tw-p-8 tw-flex tw-flex-col tw-justify-between tw-gap-6">
+              <div className="tw-flex tw-items-center tw-gap-4">
+                <div className="tw-p-3 tw-bg-amber-500 tw-text-white tw-rounded-2xl tw-shadow-lg tw-shadow-amber-200">
+                  <RefreshCcw size={24} />
+                </div>
+                <div>
+                  <h2 className="tw-text-lg tw-font-bold tw-text-amber-900">开发者操作</h2>
+                  <p className="tw-text-sm tw-text-amber-700/70">重启应用让配置生效。</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('确认重启应用吗？')) {
+                    appApi.app.relaunch();
+                  }
+                }}
+                className="tw-px-8 tw-py-4 tw-bg-amber-500 tw-text-white tw-rounded-2xl tw-font-bold tw-text-sm tw-shadow-xl tw-shadow-amber-200 hover:tw-bg-amber-600 tw-transition-all active:tw-scale-95"
+              >
+                立即重启应用
+              </button>
+            </section>
+          </div>
+        )}
+
+        {activeTab === 'integration' && (
+          <div className="tw-space-y-8">
+            <section className="tw-bg-white tw-rounded-2xl tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm">
+              <div className="tw-flex tw-items-center tw-gap-4 tw-mb-8">
+                <div className="tw-p-3 tw-bg-purple-50 tw-text-purple-600 tw-rounded-2xl">
+                  <Sparkles size={24} />
+                </div>
+                <div>
+                  <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">AI 与热榜服务</h2>
+                  <p className="tw-text-xs tw-text-slate-400">配置全局使用的模型及热榜源。</p>
+                </div>
+              </div>
+              <div className="tw-grid tw-grid-cols-1 lg:tw-grid-cols-2 tw-gap-6">
+                {['ai.dashscopeKey', 'ai.apiyiKey', 'ai.tophubKey', 'ai.tophubBaseUrl'].map((key) => (
+                  <div key={key} className="tw-space-y-2">
+                    <label className="tw-text-xs tw-font-bold tw-text-slate-500 tw-ml-1">{settingLabels[key] || key}</label>
+                    <div className="tw-flex tw-gap-2">
+                      <input
+                        type={isSecretSetting(key) ? 'password' : 'text'}
+                        value={draftValues[key] ?? ''}
+                        onChange={(event) => updateDraft(key, event.target.value)}
+                        className="tw-flex-1 tw-min-w-0 tw-bg-slate-50 tw-border tw-border-slate-100 tw-px-4 tw-py-2.5 tw-rounded-xl tw-text-sm tw-font-mono focus:tw-bg-white focus:tw-ring-4 focus:tw-ring-brand-500/10 tw-outline-none"
+                      />
+                      <button type="button" onClick={() => void saveSetting(key)} className="tw-px-4 tw-bg-slate-100 tw-text-slate-600 tw-rounded-xl hover:tw-bg-brand-500 hover:tw-text-white tw-transition-all">
+                        <Save size={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="tw-bg-white tw-rounded-2xl tw-border tw-border-slate-100 tw-overflow-hidden tw-shadow-sm">
+              <div className="tw-p-8 tw-border-b tw-border-slate-50 tw-flex tw-items-center tw-gap-4">
+                <div className="tw-p-3 tw-bg-slate-900 tw-text-white tw-rounded-2xl">
+                  <Terminal size={24} />
+                </div>
+                <div>
+                  <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">高级配置</h2>
+                  <p className="tw-text-xs tw-text-slate-400">直接编辑系统底层 Settings 表。</p>
+                </div>
+              </div>
+              <div className="tw-divide-y tw-divide-slate-50">
+                {settings.map((setting) => (
+                  <div key={setting.key} className="tw-p-6 hover:tw-bg-slate-50/30 tw-transition-all">
+                    <div className="tw-flex tw-flex-col xl:tw-flex-row xl:tw-items-center tw-gap-6">
+                      <div className="tw-flex-1 tw-min-w-0">
+                        <span className="tw-text-[10px] tw-font-bold tw-bg-slate-100 tw-text-slate-500 tw-px-2 tw-py-0.5 tw-rounded-md tw-font-mono">{setting.key}</span>
+                        <p className="tw-text-xs tw-text-slate-500 tw-font-bold tw-mt-2">{settingLabels[setting.key] || '自定义设置'}</p>
+                      </div>
+                      <div className="tw-flex tw-items-center tw-gap-3">
+                        <input
+                          type={isSecretSetting(setting.key) ? 'password' : 'text'}
+                          value={draftValues[setting.key] ?? ''}
+                          onChange={(event) => updateDraft(setting.key, event.target.value)}
+                          className="tw-w-[300px] tw-bg-slate-50 tw-border tw-border-slate-100 tw-px-4 tw-py-2 tw-rounded-xl tw-text-sm tw-font-mono"
+                        />
+                        <button type="button" onClick={() => void saveSetting(setting.key)} className="tw-p-2 tw-bg-slate-100 tw-text-slate-600 tw-rounded-lg hover:tw-bg-slate-900 hover:tw-text-white tw-transition-all">
+                          <Save size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        )}
+
+        {activeTab === 'content' && (
+          <div className="tw-space-y-10">
+            {/* 栏目库与排期策略整合 */}
+            <div className="tw-grid tw-grid-cols-12 tw-gap-8">
+              {/* Left Column: Workflow List */}
+              <div className="tw-col-span-12 lg:tw-col-span-4 tw-space-y-6">
+                <section className="tw-bg-white tw-rounded-[32px] tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm tw-h-fit">
+                  <div className="tw-flex tw-items-center tw-justify-between tw-mb-8">
+                    <div className="tw-flex tw-items-center tw-gap-3">
+                      <div className="tw-p-2 tw-bg-slate-900 tw-text-white tw-rounded-xl">
+                        <CalendarClock size={20} />
+                      </div>
+                      <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">栏目库</h2>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setWorkflowDraft({ name: '', code: '' });
+                        setEditingWorkflow(null);
+                        setIsWorkflowModalOpen(true);
+                      }}
+                      className="tw-p-2 tw-bg-brand-50 tw-text-brand-600 tw-rounded-xl hover:tw-bg-brand-100 tw-transition-all"
+                    >
+                      <Plus size={20} />
+                    </button>
+                  </div>
+
+                  <div className="tw-space-y-2">
+                    {workflows.map((wf) => (
+                      <div key={wf.code} className="tw-group tw-relative">
+                        <button
+                          onClick={() => setSelectedWorkflowCode(wf.code)}
+                          className={`tw-w-full tw-flex tw-items-center tw-justify-between tw-p-4 tw-rounded-2xl tw-border tw-transition-all ${
+                            selectedWorkflowCode === wf.code 
+                              ? 'tw-bg-slate-900 tw-border-slate-900 tw-text-white tw-shadow-lg' 
+                              : 'tw-bg-slate-50/50 tw-border-transparent tw-text-slate-600 hover:tw-bg-slate-50'
+                          }`}
+                        >
+                          <div className="tw-text-left">
+                            <p className="tw-text-sm tw-font-black">{wf.name}</p>
+                            <p className={`tw-text-[10px] tw-font-mono tw-mt-0.5 ${selectedWorkflowCode === wf.code ? 'tw-text-slate-400' : 'tw-text-slate-400'}`}>
+                              {wf.code}
+                            </p>
+                          </div>
+                        </button>
+                        <div className="tw-absolute tw-right-3 tw-top-1/2 tw--translate-y-1/2 tw-flex tw-items-center tw-gap-1 tw-opacity-0 group-hover:tw-opacity-100 tw-transition-all tw-duration-200">
+                           <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setWorkflowDraft({ name: wf.name, code: wf.code });
+                              setEditingWorkflow(wf);
+                              setIsWorkflowModalOpen(true);
+                            }}
+                            className={`tw-p-2 tw-rounded-xl tw-transition-all ${
+                              selectedWorkflowCode === wf.code 
+                                ? 'hover:tw-bg-white/20 tw-text-white' 
+                                : 'hover:tw-bg-white tw-text-slate-400 hover:tw-text-slate-900'
+                            }`}
+                            title="修改名称"
+                           >
+                             <Settings size={14} />
+                           </button>
+                           <button 
+                            onClick={(e) => { e.stopPropagation(); handleDeleteWorkflow(wf); }}
+                            className="tw-p-2 tw-rounded-xl hover:tw-bg-red-500 hover:tw-text-white tw-text-slate-400 tw-transition-all"
+                            title="删除栏目"
+                           >
+                             <Trash2 size={14} />
+                           </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </div>
+
+              {/* Right Column: Strategy & Rules */}
+              <div className="tw-col-span-12 lg:tw-col-span-8 tw-space-y-8">
+                {selectedWorkflowCode && strategy ? (
+                  <div className="tw-animate-slide-up">
+                    <PublishingStrategyCard 
+                      strategy={strategy}
+                      onUpdate={(updates) => setStrategy({ ...strategy, ...updates })}
+                      onSave={handleSaveStrategy}
+                    />
+                    <div className="tw-mt-8">
+                       <SchedulingSandbox strategy={strategy} />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="tw-bg-white tw-rounded-[32px] tw-border tw-border-dashed tw-border-slate-200 tw-h-96 tw-flex tw-items-center tw-justify-center">
+                    <p className="tw-text-sm tw-font-bold tw-text-slate-400">请从左侧选择一个栏目进行配置</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 自动调度规则 */}
+            <section className="tw-bg-white tw-rounded-[32px] tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm">
+              <div className="tw-flex tw-items-center tw-gap-4 tw-mb-10">
+                <div className="tw-p-3 tw-bg-blue-50 tw-text-blue-600 tw-rounded-2xl">
+                  <Database size={24} />
+                </div>
+                <div>
+                  <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">自动调度规则库</h2>
+                  <p className="tw-text-xs tw-text-slate-400">精细化控制特定标签或来源内容的发布节奏。</p>
+                </div>
+              </div>
+
+              {/* 规则表单与表格 (保持原有逻辑) */}
+              <div className="tw-grid tw-grid-cols-1 lg:tw-grid-cols-4 tw-gap-4 tw-mb-10">
+                 <input className="tw-bg-slate-50 tw-border tw-border-slate-100 tw-px-4 tw-py-3 tw-rounded-xl tw-text-sm" placeholder="规则名称" value={ruleDraft.name} onChange={(e) => updateRuleDraft('name', e.target.value)} />
+                 <input className="tw-bg-slate-50 tw-border tw-border-slate-100 tw-px-4 tw-py-3 tw-rounded-xl tw-text-sm" placeholder="工作流 ID" value={ruleDraft.workflowCode} onChange={(e) => updateRuleDraft('workflowCode', e.target.value)} />
+                 <input className="tw-bg-slate-50 tw-border tw-border-slate-100 tw-px-4 tw-py-3 tw-rounded-xl tw-text-sm" placeholder="每天上限" type="number" value={ruleDraft.dailyLimit} onChange={(e) => updateRuleDraft('dailyLimit', e.target.value)} />
+                 <button onClick={() => void saveRule()} className="tw-bg-slate-900 tw-text-white tw-rounded-xl tw-font-bold tw-text-sm">保存规则</button>
+              </div>
+
+              <div className="tw-overflow-x-auto">
+                <table className="tw-w-full tw-text-left">
+                  <thead>
+                    <tr className="tw-border-b tw-border-slate-100">
+                      <th className="tw-py-4 tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase">规则名称</th>
+                      <th className="tw-py-4 tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase">受控范围</th>
+                      <th className="tw-py-4 tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase">配额与频率</th>
+                      <th className="tw-py-4 tw-text-right tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="tw-divide-y tw-divide-slate-50">
+                    {dispatchRules.map((rule) => (
+                      <tr key={rule.id}>
+                        <td className="tw-py-5">
+                          <p className="tw-text-sm tw-font-black tw-text-slate-900">{rule.name}</p>
+                        </td>
+                        <td className="tw-py-5 tw-text-xs tw-text-slate-500">
+                          {rule.workflowCode || '全部工作流'}
+                        </td>
+                        <td className="tw-py-5 tw-text-xs tw-font-bold tw-text-slate-600">
+                          {rule.dailyLimit} 条 / 日，间隔 {rule.minIntervalMinutes} 分钟
+                        </td>
+                        <td className="tw-py-5 tw-text-right">
+                           <button onClick={() => deleteRule(rule)} className="tw-p-2 tw-text-slate-300 hover:tw-text-red-500"><Trash2 size={16} /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        )}
+      </div>
+      {/* Workflow Modal */}
+      {isWorkflowModalOpen && (
+        <div className="tw-fixed tw-inset-0 tw-z-[200] tw-bg-slate-900/60 tw-backdrop-blur-sm tw-flex tw-items-center tw-justify-center tw-p-6">
+          <div className="tw-bg-white tw-rounded-[32px] tw-w-full tw-max-w-md tw-overflow-hidden tw-shadow-2xl tw-animate-in tw-fade-in tw-zoom-in tw-duration-200">
+            <div className="tw-p-8">
+              <h3 className="tw-text-xl tw-font-black tw-text-slate-900 tw-mb-2">
+                {editingWorkflow ? '编辑栏目' : '新增受控栏目'}
+              </h3>
+              <p className="tw-text-xs tw-text-slate-400 tw-mb-8">定义一个新的内容分类，以便为其配置独立的发布策略。</p>
+              
+              <div className="tw-space-y-6">
+                <div className="tw-space-y-2">
+                  <label className="tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest tw-ml-1">栏目显示名称</label>
+                  <input 
+                    className="tw-w-full tw-px-5 tw-py-3.5 tw-bg-slate-50 tw-border tw-border-slate-100 tw-rounded-2xl tw-text-sm tw-font-bold focus:tw-bg-white focus:tw-outline-none focus:tw-ring-4 focus:tw-ring-brand-500/10"
+                    placeholder="例如：每日热点命理"
+                    value={workflowDraft.name}
+                    onChange={(e) => setWorkflowDraft({ ...workflowDraft, name: e.target.value })}
                   />
-                  <button type="button" onClick={() => void saveSetting(setting.key)} className="tw-flex tw-items-center tw-justify-center tw-gap-2 tw-px-5 tw-py-2.5 tw-bg-white tw-text-slate-600 tw-border tw-border-slate-200 tw-rounded-xl tw-text-xs tw-font-bold hover:tw-bg-slate-900 hover:tw-text-white hover:tw-border-slate-900 tw-transition-all">
-                    <Save size={14} />
-                    保存
-                  </button>
+                </div>
+                <div className="tw-space-y-2">
+                  <label className="tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest tw-ml-1">唯一编码 (ID)</label>
+                  <input 
+                    className="tw-w-full tw-px-5 tw-py-3.5 tw-bg-slate-50 tw-border tw-border-slate-100 tw-rounded-2xl tw-text-sm tw-font-mono focus:tw-bg-white focus:tw-outline-none focus:tw-ring-4 focus:tw-ring-brand-500/10"
+                    placeholder="例如：daily_hot_person"
+                    disabled={!!editingWorkflow}
+                    value={workflowDraft.code}
+                    onChange={(e) => setWorkflowDraft({ ...workflowDraft, code: e.target.value })}
+                  />
+                  {editingWorkflow && <p className="tw-text-[9px] tw-text-slate-400 tw-mt-1 tw-ml-1">⚠️ 编码已锁定，修改请删除重建</p>}
                 </div>
               </div>
             </div>
-          ))}
+            
+            <div className="tw-p-8 tw-bg-slate-50 tw-border-t tw-border-slate-100 tw-flex tw-gap-3">
+              <button 
+                onClick={() => setIsWorkflowModalOpen(false)}
+                className="tw-flex-1 tw-py-3 tw-bg-white tw-border tw-border-slate-200 tw-text-slate-500 tw-text-sm tw-font-black tw-rounded-2xl hover:tw-bg-slate-100 tw-transition-all"
+              >
+                取消
+              </button>
+              <button 
+                onClick={handleSaveWorkflow}
+                className="tw-flex-1 tw-py-3 tw-bg-slate-900 tw-text-white tw-text-sm tw-font-black tw-rounded-2xl hover:tw-bg-brand-600 tw-shadow-lg tw-shadow-slate-200 tw-transition-all"
+              >
+                保存设置
+              </button>
+            </div>
+          </div>
         </div>
-      </section>
-
-      <div className="tw-hidden">
-        <Database size={1} />
-      </div>
+      )}
     </div>
   );
 }

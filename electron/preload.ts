@@ -1,5 +1,5 @@
 import electron from 'electron';
-import type { AnalyzeHotPeopleInput, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, GenerateHotBaziBatchInput, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput } from '../src/shared/types.js';
+import type { AnalyzeHotPeopleInput, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDispatchRuleProfileInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, GenerateHotBaziBatchInput, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDispatchRuleProfileInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput, CreatePublishingStrategyInput, UpdatePublishingStrategyInput } from '../src/shared/types.js';
 
 const { contextBridge, ipcRenderer } = electron;
 
@@ -58,6 +58,24 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
     cancelMany: (ids: number[]) => ipcRenderer.invoke('distributionTasks:cancelMany', ids),
     deleteMany: (ids: number[]) => ipcRenderer.invoke('distributionTasks:deleteMany', ids),
     returnToReview: (id: number, comment?: string) => ipcRenderer.invoke('distributionTasks:returnToReview', id, comment),
+    assignSchedule: (id: number) => ipcRenderer.invoke('distributionTasks:assignSchedule', id),
+    assignScheduleMany: (ids: number[]) => ipcRenderer.invoke('distributionTasks:assignScheduleMany', ids),
+  },
+  dispatchRules: {
+    list: () => ipcRenderer.invoke('dispatchRules:list'),
+    create: (input: CreateDispatchRuleProfileInput) => ipcRenderer.invoke('dispatchRules:create', input),
+    update: (id: number, input: UpdateDispatchRuleProfileInput) => ipcRenderer.invoke('dispatchRules:update', id, input),
+    delete: (id: number) => ipcRenderer.invoke('dispatchRules:delete', id),
+    toggle: (id: number, enabled: boolean) => ipcRenderer.invoke('dispatchRules:toggle', id, enabled),
+  },
+  sourceColumns: {
+    list: () => ipcRenderer.invoke('sourceColumns:list'),
+  },
+  publishingStrategies: {
+    list: () => ipcRenderer.invoke('publishingStrategies:list'),
+    findByWorkflow: (workflowCode: string) => ipcRenderer.invoke('publishingStrategies:findByWorkflow', workflowCode),
+    upsert: (input: CreatePublishingStrategyInput) => ipcRenderer.invoke('publishingStrategies:upsert', input),
+    delete: (workflowCode: string) => ipcRenderer.invoke('publishingStrategies:delete', workflowCode),
   },
   hotBaziTasks: {
     list: () => ipcRenderer.invoke('hotBaziTasks:list'),

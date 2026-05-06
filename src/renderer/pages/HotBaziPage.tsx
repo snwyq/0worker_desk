@@ -1,7 +1,7 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, Copy, Loader2, Pencil, Send, Settings2, Sparkles, Trash2 } from 'lucide-react';
 import { appApi } from '../api';
-import type { Account, HotBaziTask, HotPerson } from '../../shared/types';
+import type { Account, HotBaziTask, HotPerson, AiWorkflow } from '../../shared/types';
 
 const batchSizeOptions = [
   { value: '2', label: '2 条' },
@@ -23,6 +23,7 @@ interface StoredHotBaziConfig {
   model?: HotBaziModel;
   batchSize?: string;
   promptTemplate?: string;
+  workflowCode?: string;
 }
 
 interface HotBaziRunState {
@@ -97,6 +98,7 @@ export function HotBaziPage() {
   const [tasks, setTasks] = useState<HotBaziTask[]>([]);
   const [activeTab, setActiveTab] = useState<'draft' | 'queued'>('draft');
   const [hotPeople, setHotPeople] = useState<HotPerson[]>([]);
+  const [workflows, setWorkflows] = useState<AiWorkflow[]>([]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [editingContent, setEditingContent] = useState('');
@@ -106,6 +108,7 @@ export function HotBaziPage() {
   const [accountId, setAccountId] = useState(storedConfig.accountId ?? '');
   const [model, setModel] = useState<HotBaziModel>(modelOptions.includes(storedConfig.model as HotBaziModel) ? (storedConfig.model as HotBaziModel) : 'deepseek-v3.2');
   const [batchSize, setBatchSize] = useState(storedConfig.batchSize ?? '2');
+  const [workflowCode, setWorkflowCode] = useState(storedConfig.workflowCode ?? '');
   const [promptTemplate, setPromptTemplate] = useState(storedConfig.promptTemplate || defaultPromptTemplate);
   const [runState, setRunState] = useState<HotBaziRunState>(() => readRunState());
   const [notice, setNotice] = useState('');
@@ -121,22 +124,45 @@ export function HotBaziPage() {
     accountId: storedConfig.accountId ?? '',
     model: modelOptions.includes(storedConfig.model as HotBaziModel) ? (storedConfig.model as HotBaziModel) : 'deepseek-v3.2',
     batchSize: storedConfig.batchSize ?? '2',
+    workflowCode: storedConfig.workflowCode ?? '',
   });
 
   async function load() {
     setIsInitialLoading(true);
-    const [nextAccounts, nextTasks, nextHotPeople] = await Promise.all([
-      appApi.accounts.list().catch(() => []),
-      appApi.hotBaziTasks.list().catch(() => []),
-      appApi.ai.listHotPeople().catch(() => []),
-    ]);
-    setAccounts(nextAccounts);
-    setTasks(nextTasks);
-    setHotPeople(nextHotPeople);
-    if (!accountId && nextAccounts[0]) {
-      setAccountId(String(nextAccounts[0].id));
+    try {
+      const [nextAccounts, nextTasks, nextHotPeople, plugins] = await Promise.all([
+        appApi.accounts.list().catch(() => []),
+        appApi.hotBaziTasks.list().catch(() => []),
+        appApi.ai.listHotPeople().catch(() => []),
+        appApi.ai.listPlugins().catch(() => []),
+      ]);
+
+      // 获取所有 Workflow
+      const allWorkflows: AiWorkflow[] = [];
+      for (const plugin of plugins) {
+        try {
+          const wfs = await appApi.ai.listWorkflows(plugin.code);
+          allWorkflows.push(...wfs);
+        } catch (e) { console.error(e); }
+      }
+      setWorkflows(allWorkflows);
+      
+      setAccounts(nextAccounts);
+      setTasks(nextTasks);
+      setHotPeople(nextHotPeople);
+
+      if (!accountId && nextAccounts[0]) {
+        setAccountId(String(nextAccounts[0].id));
+      }
+      
+      if (!workflowCode && allWorkflows.length > 0) {
+        setWorkflowCode(allWorkflows[0].code);
+      }
+    } catch (e) {
+      console.error('Failed to load HotBaziPage data:', e);
+    } finally {
+      setIsInitialLoading(false);
     }
-    setIsInitialLoading(false);
   }
 
   useEffect(() => {
@@ -149,8 +175,9 @@ export function HotBaziPage() {
       model,
       batchSize,
       promptTemplate,
+      workflowCode,
     }));
-  }, [accountId, model, batchSize, promptTemplate]);
+  }, [accountId, model, batchSize, promptTemplate, workflowCode]);
 
   useEffect(() => {
     window.localStorage.setItem(HOT_BAZI_RUN_STATE_KEY, JSON.stringify(runState));
@@ -171,6 +198,7 @@ export function HotBaziPage() {
       accountId,
       model,
       batchSize,
+      workflowCode,
     });
     setShowConfigModal(true);
   }
@@ -180,6 +208,7 @@ export function HotBaziPage() {
       accountId,
       model,
       batchSize,
+      workflowCode,
     });
     setShowConfigModal(false);
   }
@@ -189,6 +218,7 @@ export function HotBaziPage() {
       accountId: accounts[0] ? String(accounts[0].id) : accountId,
       model: 'deepseek-v3.2',
       batchSize: '2',
+      workflowCode: workflows[0]?.code || '',
     });
   }
 
@@ -196,6 +226,7 @@ export function HotBaziPage() {
     setAccountId(configDraft.accountId);
     setModel(configDraft.model);
     setBatchSize(configDraft.batchSize);
+    setWorkflowCode(configDraft.workflowCode);
     setShowConfigModal(false);
   }
 
@@ -348,6 +379,7 @@ export function HotBaziPage() {
         model,
         limit: batchSize === 'all' ? todayCompletedHotPeopleCount : Number(batchSize),
         promptTemplate,
+        workflowCode, // 绑定栏目 ID
       });
       setNotice(`已生成 ${result.createdContents} 条内容，写入热点八字任务 ${result.createdTasks} 条。`);
       if (result.errors.length > 0) {
@@ -596,6 +628,13 @@ export function HotBaziPage() {
                 <div className="tw-mb-2 tw-text-sm tw-font-bold tw-text-slate-700">数量</div>
                 <select value={configDraft.batchSize} onChange={(event) => setConfigDraft((current) => ({ ...current, batchSize: event.target.value }))} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3 tw-text-sm">
                   {batchSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label className="tw-block">
+                <div className="tw-mb-2 tw-text-sm tw-font-bold tw-text-slate-700">关联受控栏目</div>
+                <select value={configDraft.workflowCode} onChange={(event) => setConfigDraft((current) => ({ ...current, workflowCode: event.target.value }))} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3 tw-text-sm">
+                  {workflows.map((wf) => <option key={wf.code} value={wf.code}>{wf.name}</option>)}
+                  {workflows.length === 0 && <option value="">无可用栏目</option>}
                 </select>
               </label>
             </div>

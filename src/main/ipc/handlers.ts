@@ -1,6 +1,6 @@
 import electron from 'electron';
 import http from 'node:http';
-import type { AnalyzeHotPeopleInput, ConnectionTestResult, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, GenerateHotBaziBatchInput, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput } from '../../shared/types.js';
+import type { AnalyzeHotPeopleInput, ConnectionTestResult, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDispatchRuleProfileInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreatePublishingStrategyInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, GenerateHotBaziBatchInput, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDispatchRuleProfileInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput } from '../../shared/types.js';
 import { fetchAdsPowerProfiles } from '../browser/AdsPowerApi.js';
 import { createConnectorForAccount } from '../browser/BrowserConnectorFactory.js';
 import type { AppDatabase } from '../db/database.js';
@@ -240,11 +240,11 @@ async function syncAdsPowerAccounts(repositories: AppDatabase) {
 
   const profiles = await fetchAdsPowerProfiles(apiKey);
   const existingAccounts = repositories.accounts.list();
-  
+
   let syncCount = 0;
   for (const profile of profiles) {
     const existing = existingAccounts.find(a => a.providerProfileId === profile.user_id && a.browserMode === 'adspower');
-    
+
     if (!existing) {
       repositories.accounts.create({
         name: profile.name || `AdsPower ${profile.user_id}`,
@@ -265,7 +265,7 @@ async function syncAdsPowerAccounts(repositories: AppDatabase) {
       });
     }
   }
-  
+
   return {
     ok: true,
     message: `Successfully synchronized ${profiles.length} profiles from AdsPower. Added ${syncCount} new accounts.`,
@@ -361,6 +361,14 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   ipcMain.handle('distributionTasks:returnToReview', (_event, id: number, comment?: string) => (
     repositories.distributionTasks.returnToReview(id, comment ?? 'Returned to review')
   ));
+  ipcMain.handle('distributionTasks:assignSchedule', (_event, id: number) => repositories.distributionTasks.assignSchedule(id));
+  ipcMain.handle('distributionTasks:assignScheduleMany', (_event, ids: number[]) => repositories.distributionTasks.assignScheduleMany(ids));
+  ipcMain.handle('dispatchRules:list', () => repositories.dispatchRules.list());
+  ipcMain.handle('dispatchRules:create', (_event, input: CreateDispatchRuleProfileInput) => repositories.dispatchRules.create(input));
+  ipcMain.handle('dispatchRules:update', (_event, id: number, input: UpdateDispatchRuleProfileInput) => repositories.dispatchRules.update(id, input));
+  ipcMain.handle('dispatchRules:delete', (_event, id: number) => ({ ok: repositories.dispatchRules.delete(id) }));
+  ipcMain.handle('dispatchRules:toggle', (_event, id: number, enabled: boolean) => repositories.dispatchRules.toggle(id, enabled));
+  ipcMain.handle('sourceColumns:list', () => repositories.sourceColumns.list());
   ipcMain.handle('hotBaziTasks:list', () => repositories.hotBaziTasks.list());
   ipcMain.handle('hotBaziTasks:create', (_event, input: CreateHotBaziTaskInput) => repositories.hotBaziTasks.create(input));
   ipcMain.handle('hotBaziTasks:update', (_event, id: number, input: UpdateHotBaziTaskInput) => repositories.hotBaziTasks.update(id, input));
@@ -394,6 +402,16 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
     ok: repositories.contentStyles.delete(id),
   }));
   ipcMain.handle('ai:listWorkflows', (_event, pluginCode: string) => repositories.aiWorkflows.listByPlugin(pluginCode));
+
+  // Publishing Strategies
+  ipcMain.handle('publishingStrategies:list', () => repositories.publishingStrategies.list());
+  ipcMain.handle('publishingStrategies:findByWorkflow', (_event, workflowCode: string) => repositories.publishingStrategies.findByWorkflow(workflowCode));
+  ipcMain.handle('publishingStrategies:upsert', (_event, input: CreatePublishingStrategyInput) => repositories.publishingStrategies.upsert(input));
+  ipcMain.handle('publishingStrategies:delete', (_event, workflowCode: string) => {
+    repositories.publishingStrategies.delete(workflowCode);
+    return { ok: true };
+  });
+
   ipcMain.handle('ai:startWorkflowRun', async (event, input: StartWorkflowRunInput) => (
     startWorkflowRun(event, repositories, input)
   ));
@@ -510,10 +528,10 @@ async function handlePreviewWorkflow(event: any, repositories: AppDatabase, plug
   const cleanPluginCode = (pluginCode || '').trim();
   const cleanWorkflowCode = (workflowCode || '').trim();
   console.log(`[AI-DEBUG] Preview Request: Plugin="${cleanPluginCode}", Workflow="${cleanWorkflowCode}"`);
-  
+
   const engine = getWorkflowEngine();
   let workflowRecord: any = null;
-  
+
   if (cleanPluginCode === 'maoxiaoxian') {
     workflowRecord = {
       pluginCode: 'maoxiaoxian',
@@ -531,7 +549,7 @@ async function handlePreviewWorkflow(event: any, repositories: AppDatabase, plug
   }
 
   if (!workflowRecord) throw new Error(`Workflow ${cleanWorkflowCode} not found`);
-  
+
   return await engine.start(
     { ...workflowRecord.definitionJson, pluginCode: workflowRecord.pluginCode, workflowId: workflowRecord.code },
     null,
@@ -559,7 +577,7 @@ function readBody(request: http.IncomingMessage): Promise<unknown> {
 
 function getAllowedOrigin(request: http.IncomingMessage) {
   const origin = request.headers.origin;
-  
+
   // 允许所有本地开发环境的 Origin
   if (origin && (origin.startsWith('http://127.0.0.1:') || origin.startsWith('http://localhost:') || origin === 'null')) {
     return origin;
@@ -569,7 +587,7 @@ function getAllowedOrigin(request: http.IncomingMessage) {
     ?.split(',')
     .map((o) => o.trim())
     .filter(Boolean) ?? ['http://127.0.0.1:5173', 'http://localhost:5173'];
-    
+
   if (origin && configuredOrigins.includes(origin)) {
     return origin;
   }
@@ -713,6 +731,41 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
         return;
       }
 
+      if (request.method === 'GET' && request.url === '/dispatch-rules') {
+        sendJson(request, response, 200, repositories.dispatchRules.list());
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/dispatch-rules') {
+        const input = await readBody(request) as CreateDispatchRuleProfileInput;
+        sendJson(request, response, 200, repositories.dispatchRules.create(input));
+        return;
+      }
+
+      const dispatchRuleMatch = request.url?.match(/^\/dispatch-rules\/(\d+)$/);
+      if (request.method === 'PATCH' && dispatchRuleMatch) {
+        const input = await readBody(request) as UpdateDispatchRuleProfileInput;
+        sendJson(request, response, 200, repositories.dispatchRules.update(Number(dispatchRuleMatch[1]), input));
+        return;
+      }
+
+      if (request.method === 'DELETE' && dispatchRuleMatch) {
+        sendJson(request, response, 200, { ok: repositories.dispatchRules.delete(Number(dispatchRuleMatch[1])) });
+        return;
+      }
+
+      const dispatchRuleToggleMatch = request.url?.match(/^\/dispatch-rules\/(\d+)\/toggle$/);
+      if (request.method === 'POST' && dispatchRuleToggleMatch) {
+        const input = await readBody(request) as { enabled?: boolean };
+        sendJson(request, response, 200, repositories.dispatchRules.toggle(Number(dispatchRuleToggleMatch[1]), input.enabled === true));
+        return;
+      }
+
+      if (request.method === 'GET' && request.url === '/source-columns') {
+        sendJson(request, response, 200, repositories.sourceColumns.list());
+        return;
+      }
+
       if (request.method === 'GET' && request.url === '/hot-bazi-tasks') {
         sendJson(request, response, 200, repositories.hotBaziTasks.list());
         return;
@@ -787,6 +840,18 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
       if (request.method === 'POST' && request.url === '/distribution-tasks/retry-many') {
         const input = await readBody(request) as { ids: number[] };
         sendJson(request, response, 200, repositories.distributionTasks.retryMany(input.ids));
+        return;
+      }
+
+      const distributionAssignScheduleMatch = request.url?.match(/^\/distribution-tasks\/(\d+)\/assign-schedule$/);
+      if (request.method === 'POST' && distributionAssignScheduleMatch) {
+        sendJson(request, response, 200, repositories.distributionTasks.assignSchedule(Number(distributionAssignScheduleMatch[1])));
+        return;
+      }
+
+      if (request.method === 'POST' && request.url === '/distribution-tasks/assign-schedule-many') {
+        const input = await readBody(request) as { ids: number[] };
+        sendJson(request, response, 200, repositories.distributionTasks.assignScheduleMany(input.ids));
         return;
       }
 
@@ -1063,6 +1128,33 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
       if (request.method === 'POST' && request.url === '/ai/generate-image') {
         const input = await readBody(request) as AiImageOptions;
         sendJson(request, response, 200, { url: await httpAiService.generateImage(input) });
+        return;
+      }
+
+      // Publishing Strategies HTTP routes
+      if (request.method === 'GET' && requestUrl.pathname === '/publishing-strategies') {
+        sendJson(request, response, 200, repositories.publishingStrategies.list());
+        return;
+      }
+
+      const publishingStrategyMatch = requestUrl.pathname.match(/^\/publishing-strategies\/(.+)$/);
+      if (request.method === 'GET' && publishingStrategyMatch) {
+        const workflowCode = decodeURIComponent(publishingStrategyMatch[1]);
+        const strategy = repositories.publishingStrategies.findByWorkflow(workflowCode);
+        sendJson(request, response, strategy ? 200 : 404, strategy ?? { error: 'Not found' });
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/publishing-strategies') {
+        const input = await readBody(request) as CreatePublishingStrategyInput;
+        sendJson(request, response, 200, repositories.publishingStrategies.upsert(input));
+        return;
+      }
+
+      if (request.method === 'DELETE' && publishingStrategyMatch) {
+        const workflowCode = decodeURIComponent(publishingStrategyMatch[1]);
+        repositories.publishingStrategies.delete(workflowCode);
+        sendJson(request, response, 200, { ok: true });
         return;
       }
 

@@ -2,6 +2,7 @@ import type { AppDatabase } from '../db/database.js';
 import type { GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotPerson } from '../../shared/types.js';
 import { Solar } from 'lunar-typescript';
 import { AiService } from './AiService.js';
+import { SchedulingEngine } from '../core/workflow/SchedulingEngine.js';
 
 function toSourceTopic(person: HotPerson) {
   return String(person.sourceTopicTitle || person.name || '').trim();
@@ -149,13 +150,16 @@ export class HotBaziService {
         result.createdContents += 1;
         result.contentIds.push(content.id);
 
+        const schedulingEngine = new SchedulingEngine(this.db);
+        const scheduledAt = schedulingEngine.allocateScheduledTime('maoxiaoxian.daily_hot_person');
+
         const task = this.db.hotBaziTasks.create({
           contentId: content.id,
           accountId: account.id,
           platform: account.platform,
           hotPersonId: person.id,
           sourceTopic: toSourceTopic(person),
-          scheduledAt: generatedAt,
+          scheduledAt,
           status: 'draft',
           automationEnabled: false,
           intervalMinutes: 0,
