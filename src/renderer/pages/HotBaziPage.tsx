@@ -11,6 +11,53 @@ const batchSizeOptions = [
   { value: 'all', label: '全部' },
 ];
 
+const HOT_BAZI_CONFIG_STORAGE_KEY = 'hotBazi.generationConfig';
+const HOT_BAZI_RUN_STATE_KEY = 'hotBazi.generationState';
+const modelOptions = ['qwen3.5-plus', 'deepseek-v3.2', 'kimi-k2.5'] as const;
+type HotBaziModel = typeof modelOptions[number];
+type HotBaziRunStatus = 'idle' | 'running' | 'success' | 'failed';
+
+interface StoredHotBaziConfig {
+  accountId?: string;
+  model?: HotBaziModel;
+  batchSize?: string;
+  promptTemplate?: string;
+}
+
+interface HotBaziRunState {
+  status: HotBaziRunStatus;
+  message: string;
+  updatedAt: string;
+}
+
+function readStoredHotBaziConfig(): StoredHotBaziConfig {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(HOT_BAZI_CONFIG_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as StoredHotBaziConfig;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function readRunState(): HotBaziRunState {
+  if (typeof window === 'undefined') return { status: 'idle', message: '', updatedAt: '' };
+  try {
+    const raw = window.localStorage.getItem(HOT_BAZI_RUN_STATE_KEY);
+    if (!raw) return { status: 'idle', message: '', updatedAt: '' };
+    const parsed = JSON.parse(raw) as HotBaziRunState;
+    return {
+      status: parsed?.status === 'running' || parsed?.status === 'success' || parsed?.status === 'failed' ? parsed.status : 'idle',
+      message: typeof parsed?.message === 'string' ? parsed.message : '',
+      updatedAt: typeof parsed?.updatedAt === 'string' ? parsed.updatedAt : '',
+    };
+  } catch {
+    return { status: 'idle', message: '', updatedAt: '' };
+  }
+}
+
 const defaultPromptTemplate = [
   '请扮演一位铁口直断的高级八字命理专家，根据以下资料撰写一篇人物八字短评。',
   '',
@@ -44,8 +91,10 @@ const defaultPromptTemplate = [
 ].join('\n');
 
 export function HotBaziPage() {
+  const storedConfig = readStoredHotBaziConfig();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [tasks, setTasks] = useState<HotBaziTask[]>([]);
+  const [activeTab, setActiveTab] = useState<'draft' | 'queued'>('draft');
   const [hotPeople, setHotPeople] = useState<HotPerson[]>([]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
@@ -53,13 +102,19 @@ export function HotBaziPage() {
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showPromptModal, setShowPromptModal] = useState(false);
 
-  const [accountId, setAccountId] = useState('');
-  const [model, setModel] = useState<'qwen3.5-plus' | 'deepseek-v3.2' | 'kimi-k2.5'>('deepseek-v3.2');
-  const [batchSize, setBatchSize] = useState('2');
-  const [promptTemplate, setPromptTemplate] = useState(defaultPromptTemplate);
-  const [running, setRunning] = useState(false);
+  const [accountId, setAccountId] = useState(storedConfig.accountId ?? '');
+  const [model, setModel] = useState<HotBaziModel>(modelOptions.includes(storedConfig.model as HotBaziModel) ? (storedConfig.model as HotBaziModel) : 'deepseek-v3.2');
+  const [batchSize, setBatchSize] = useState(storedConfig.batchSize ?? '2');
+  const [promptTemplate, setPromptTemplate] = useState(storedConfig.promptTemplate || defaultPromptTemplate);
+  const [runState, setRunState] = useState<HotBaziRunState>(() => readRunState());
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [copiedTaskId, setCopiedTaskId] = useState<number | null>(null);
+  const [configDraft, setConfigDraft] = useState({
+    accountId: storedConfig.accountId ?? '',
+    model: modelOptions.includes(storedConfig.model as HotBaziModel) ? (storedConfig.model as HotBaziModel) : 'deepseek-v3.2',
+    batchSize: storedConfig.batchSize ?? '2',
+  });
 
   async function load() {
     const [nextAccounts, nextTasks, nextHotPeople] = await Promise.all([
@@ -79,6 +134,96 @@ export function HotBaziPage() {
     void load();
   }, []);
 
+  useEffect(() => {
+    window.localStorage.setItem(HOT_BAZI_CONFIG_STORAGE_KEY, JSON.stringify({
+      accountId,
+      model,
+      batchSize,
+      promptTemplate,
+    }));
+  }, [accountId, model, batchSize, promptTemplate]);
+
+  useEffect(() => {
+    window.localStorage.setItem(HOT_BAZI_RUN_STATE_KEY, JSON.stringify(runState));
+  }, [runState]);
+
+  useEffect(() => {
+    if (runState.status !== 'running' || !runState.updatedAt) return;
+    const startedAt = new Date(runState.updatedAt).getTime();
+    if (Number.isNaN(startedAt)) return;
+    const staleMs = 30 * 60 * 1000;
+    if (Date.now() - startedAt > staleMs) {
+      setRunStatus('idle', '');
+    }
+  }, [runState.status, runState.updatedAt]);
+
+  function openConfigModal() {
+    setConfigDraft({
+      accountId,
+      model,
+      batchSize,
+    });
+    setShowConfigModal(true);
+  }
+
+  function closeConfigModal() {
+    setConfigDraft({
+      accountId,
+      model,
+      batchSize,
+    });
+    setShowConfigModal(false);
+  }
+
+  function resetConfigDraft() {
+    setConfigDraft({
+      accountId: accounts[0] ? String(accounts[0].id) : accountId,
+      model: 'deepseek-v3.2',
+      batchSize: '2',
+    });
+  }
+
+  function saveConfigDraft() {
+    setAccountId(configDraft.accountId);
+    setModel(configDraft.model);
+    setBatchSize(configDraft.batchSize);
+    setShowConfigModal(false);
+  }
+
+  function setRunStatus(status: HotBaziRunStatus, message = '') {
+    setRunState({
+      status,
+      message,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  async function copyTextToClipboard(text: string) {
+    if (!text) {
+      throw new Error('没有可复制的内容');
+    }
+
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+    textarea.setAttribute('readonly', 'true');
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+
+    if (!copied) {
+      throw new Error('复制失败，请重试');
+    }
+  }
+
   const accountNameById = useMemo(() => new Map(accounts.map((item) => [item.id, item.name])), [accounts]);
   const currentAccountName = accountNameById.get(Number(accountId)) || '未选择';
 
@@ -97,6 +242,12 @@ export function HotBaziPage() {
   }, [hotPeople]);
 
   const allSelected = tasks.length > 0 && selectedTaskIds.length === tasks.length;
+  const draftTasks = tasks.filter((task) => task.status !== 'queued');
+  const queuedTasks = tasks.filter((task) => task.status === 'queued');
+  const visibleTasks = activeTab === 'queued' ? queuedTasks : draftTasks;
+  const visibleTaskIds = visibleTasks.map((task) => task.id);
+  const visibleSelectedTaskIds = selectedTaskIds.filter((id) => visibleTaskIds.includes(id));
+  const visibleAllSelected = visibleTasks.length > 0 && visibleSelectedTaskIds.length === visibleTasks.length;
   const actionButtonClass = 'tw-inline-flex tw-h-9 tw-w-[120px] tw-items-center tw-justify-center tw-gap-1.5 tw-rounded-lg tw-border tw-px-3 tw-text-xs tw-font-bold tw-transition-colors';
   const actionButtonNeutralClass = `${actionButtonClass} tw-border-slate-200 tw-bg-white tw-text-slate-700 hover:tw-bg-slate-50`;
   const actionButtonPrimaryClass = `${actionButtonClass} tw-border-slate-900 tw-bg-slate-900 tw-text-white hover:tw-bg-slate-800`;
@@ -112,7 +263,9 @@ export function HotBaziPage() {
   }
 
   function toggleAllSelection() {
-    setSelectedTaskIds(allSelected ? [] : tasks.map((task) => task.id));
+    setSelectedTaskIds(visibleAllSelected
+      ? selectedTaskIds.filter((id) => !visibleTaskIds.includes(id))
+      : Array.from(new Set([...selectedTaskIds, ...visibleTaskIds])));
   }
 
   function startEdit(task: HotBaziTask) {
@@ -163,9 +316,9 @@ export function HotBaziPage() {
   }
 
   async function handleGenerate() {
-    setRunning(true);
     setError('');
     setNotice('');
+    setRunStatus('running', '正在生成热点八字内容');
     try {
       const result = await appApi.ai.generateHotBaziBatch({
         accountId: Number(accountId),
@@ -174,16 +327,31 @@ export function HotBaziPage() {
         promptTemplate,
       });
       setNotice(`已生成 ${result.createdContents} 条内容，写入热点八字任务 ${result.createdTasks} 条。`);
-      if (result.errors.length > 0) setError(result.errors.join('；'));
+      if (result.errors.length > 0) {
+        const message = result.errors.join('；');
+        setError(message);
+        setRunStatus('failed', message);
+      } else {
+        setRunStatus('success', `已生成 ${result.createdContents} 条内容`);
+      }
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setError(message);
+      setRunStatus('failed', message);
     } finally {
-      setRunning(false);
+      void load();
     }
   }
 
   const summaryLine = `账号：${currentAccountName} | 模型：${model} | 数量：${batchSize === 'all' ? '全部' : `${batchSize} 条`} | 结果：只生成内容，不在本页排发布时间`;
+  const runStatusLabel = runState.status === 'running'
+    ? '生成中'
+    : runState.status === 'success'
+      ? '上次生成成功'
+      : runState.status === 'failed'
+        ? '上次生成失败'
+        : '空闲';
 
   return (
     <div className="tw-min-h-screen tw-pb-20 tw-animate-fade-in">
@@ -205,7 +373,7 @@ export function HotBaziPage() {
           <div className="tw-space-y-4">
             <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-2 tw-rounded-xl tw-bg-slate-50 tw-border tw-border-slate-200 tw-px-4 tw-py-3 tw-text-sm tw-font-medium tw-text-slate-600">
               <span className="tw-break-words">{summaryLine}</span>
-              <button type="button" onClick={() => setShowConfigModal(true)} className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-lg tw-bg-white tw-px-3 tw-py-1.5 tw-text-xs tw-font-black tw-text-slate-700 tw-border tw-border-slate-200 tw-ml-auto">
+              <button type="button" onClick={openConfigModal} className="tw-inline-flex tw-items-center tw-gap-2 tw-rounded-lg tw-bg-white tw-px-3 tw-py-1.5 tw-text-xs tw-font-black tw-text-slate-700 tw-border tw-border-slate-200 tw-ml-auto">
                 <Settings2 size={14} />
                 配置参数
               </button>
@@ -219,28 +387,61 @@ export function HotBaziPage() {
               今天已整理好的热点人物：{todayCompletedHotPeopleCount} 条
             </div>
 
-            <button type="button" onClick={() => void handleGenerate()} disabled={running || !accountId} className="tw-inline-flex tw-w-full tw-items-center tw-justify-center tw-gap-2 tw-rounded-2xl tw-bg-slate-900 tw-px-4 tw-py-3 tw-text-sm tw-font-black tw-text-white disabled:tw-bg-slate-300">
-              <Sparkles size={16} className={running ? 'tw-animate-spin' : ''} />
-              {running ? '正在生成热点八字内容' : '开始生成'}
+            <button type="button" onClick={() => void handleGenerate()} disabled={runState.status === 'running' || !accountId} className="tw-inline-flex tw-w-full tw-items-center tw-justify-center tw-gap-2 tw-rounded-2xl tw-bg-slate-900 tw-px-4 tw-py-3 tw-text-sm tw-font-black tw-text-white disabled:tw-bg-slate-300">
+              <Sparkles size={16} className={runState.status === 'running' ? 'tw-animate-spin' : ''} />
+              {runState.status === 'running' ? '正在生成热点八字内容' : '开始生成'}
             </button>
+            <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-2 tw-text-xs tw-font-bold">
+              <span className={`tw-rounded-full tw-px-3 tw-py-1 ${runState.status === 'running' ? 'tw-bg-blue-50 tw-text-blue-600' : runState.status === 'success' ? 'tw-bg-emerald-50 tw-text-emerald-600' : runState.status === 'failed' ? 'tw-bg-red-50 tw-text-red-600' : 'tw-bg-slate-100 tw-text-slate-500'}`}>
+                {runStatusLabel}
+              </span>
+              {runState.updatedAt && (
+                <span className="tw-text-slate-400">
+                  {new Date(runState.updatedAt).toLocaleString()}
+                </span>
+              )}
+              {runState.message && (
+                <span className="tw-text-slate-500 tw-font-medium">
+                  {runState.message}
+                </span>
+              )}
+            </div>
           </div>
         </section>
 
         <section className="tw-rounded-[1.5rem] tw-border tw-border-slate-200 tw-bg-white tw-p-5 tw-shadow-sm">
-          <div className="tw-mb-4 tw-flex tw-flex-wrap tw-items-center tw-gap-3">
-            <label className="tw-inline-flex tw-items-center tw-gap-2 tw-text-sm tw-font-bold tw-text-slate-700">
-              <input type="checkbox" checked={allSelected} onChange={toggleAllSelection} />
-              全选
-            </label>
-            <button type="button" onClick={() => void handleBatchEnqueue()} disabled={selectedTaskIds.length === 0} className="tw-rounded-xl tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-xs tw-font-black tw-text-white disabled:tw-bg-slate-300">
-              送调度
-            </button>
-            <button type="button" onClick={() => void handleBatchDelete()} disabled={selectedTaskIds.length === 0} className="tw-rounded-xl tw-bg-red-50 tw-px-4 tw-py-2 tw-text-xs tw-font-black tw-text-red-600 tw-border tw-border-red-200 disabled:tw-opacity-50">
-              批量删除
-            </button>
+          <div className="tw-mb-4 tw-flex tw-flex-wrap tw-items-end tw-justify-between tw-gap-3 tw-border-b tw-border-slate-200 tw-pb-3">
+            <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3">
+              <label className="tw-inline-flex tw-items-center tw-gap-2 tw-text-sm tw-font-bold tw-text-slate-700">
+                <input type="checkbox" checked={visibleAllSelected} onChange={toggleAllSelection} />
+                全选
+              </label>
+              <button type="button" onClick={() => void handleBatchEnqueue()} disabled={visibleSelectedTaskIds.length === 0} className="tw-rounded-xl tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-xs tw-font-black tw-text-white disabled:tw-bg-slate-300">
+                送调度
+              </button>
+              <button type="button" onClick={() => void handleBatchDelete()} disabled={visibleSelectedTaskIds.length === 0} className="tw-rounded-xl tw-bg-red-50 tw-px-4 tw-py-2 tw-text-xs tw-font-black tw-text-red-600 tw-border tw-border-red-200 disabled:tw-opacity-50">
+                批量删除
+              </button>
+            </div>
+            <div className="tw-flex tw-items-center tw-gap-1 tw-rounded-2xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-p-1">
+              <button
+                type="button"
+                onClick={() => setActiveTab('draft')}
+                className={`tw-rounded-xl tw-px-4 tw-py-2 tw-text-xs tw-font-black tw-transition-colors ${activeTab === 'draft' ? 'tw-bg-white tw-text-slate-900 tw-shadow-sm' : 'tw-text-slate-500 hover:tw-text-slate-800'}`}
+              >
+                待调度 {draftTasks.length}
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('queued')}
+                className={`tw-rounded-xl tw-px-4 tw-py-2 tw-text-xs tw-font-black tw-transition-colors ${activeTab === 'queued' ? 'tw-bg-white tw-text-slate-900 tw-shadow-sm' : 'tw-text-slate-500 hover:tw-text-slate-800'}`}
+              >
+                已调度 {queuedTasks.length}
+              </button>
+            </div>
           </div>
 
-          {tasks.length === 0 ? (
+          {visibleTasks.length === 0 ? (
             <div className="tw-rounded-2xl tw-border tw-border-dashed tw-border-slate-200 tw-bg-slate-50 tw-p-8 tw-text-center tw-text-sm tw-font-medium tw-text-slate-400">还没有热点八字任务</div>
           ) : (
             <div className="tw-max-w-full tw-overflow-x-auto">
@@ -257,7 +458,7 @@ export function HotBaziPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {tasks.map((task, index) => (
+                  {visibleTasks.map((task, index) => (
                     <tr key={task.id} className="tw-border-b tw-border-slate-100 hover:tw-bg-slate-50/60">
                       <td className="tw-px-3 tw-py-4 tw-align-top">
                         <input type="checkbox" checked={selectedTaskIds.includes(task.id)} onChange={() => toggleTaskSelection(task.id)} />
@@ -308,9 +509,20 @@ export function HotBaziPage() {
                             <Send size={12} />
                             <span>送调度</span>
                           </button>
-                          <button type="button" onClick={() => void navigator.clipboard.writeText(taskContentPreview(task) || '').then(() => setNotice('已复制热点八字内容。')).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))} className={actionButtonNeutralClass}>
+                          <button type="button" onClick={() => {
+                            void copyTextToClipboard(taskContentPreview(task) || '')
+                              .then(() => {
+                                setError('');
+                                setNotice('已复制热点八字内容。');
+                                setCopiedTaskId(task.id);
+                                window.setTimeout(() => {
+                                  setCopiedTaskId((current) => (current === task.id ? null : current));
+                                }, 1600);
+                              })
+                              .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+                          }} className={actionButtonNeutralClass}>
                             <Copy size={12} />
-                            <span>复制</span>
+                            <span>{copiedTaskId === task.id ? '已复制' : '复制'}</span>
                           </button>
                           <button type="button" onClick={() => void appApi.hotBaziTasks.delete(task.id).then(() => { setNotice('已删除任务。'); return load(); }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))} className={actionButtonDangerClass}>
                             <Trash2 size={12} />
@@ -328,33 +540,44 @@ export function HotBaziPage() {
       </div>
 
       {showConfigModal && (
-        <div className="tw-fixed tw-inset-0 tw-z-50 tw-bg-slate-900/35 tw-flex tw-items-center tw-justify-center tw-p-6">
+        <div className="tw-fixed tw-inset-0 tw-z-50 tw-flex tw-items-center tw-justify-center tw-bg-slate-900/35 tw-p-6">
           <div className="tw-w-full tw-max-w-2xl tw-rounded-[1.5rem] tw-bg-white tw-p-6 tw-shadow-2xl">
             <div className="tw-mb-4 tw-flex tw-items-center tw-justify-between">
               <h3 className="tw-text-lg tw-font-black tw-text-slate-900">生成配置</h3>
-              <button type="button" onClick={() => setShowConfigModal(false)} className="tw-text-sm tw-font-bold tw-text-slate-500">关闭</button>
+              <button type="button" onClick={closeConfigModal} className="tw-text-sm tw-font-bold tw-text-slate-500">关闭</button>
             </div>
             <div className="tw-grid tw-gap-4 md:tw-grid-cols-2">
               <label className="tw-block">
                 <div className="tw-mb-2 tw-text-sm tw-font-bold tw-text-slate-700">账号选择</div>
-                <select value={accountId} onChange={(event) => setAccountId(event.target.value)} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3 tw-text-sm">
+                <select value={configDraft.accountId} onChange={(event) => setConfigDraft((current) => ({ ...current, accountId: event.target.value }))} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3 tw-text-sm">
                   {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
                 </select>
               </label>
               <label className="tw-block">
                 <div className="tw-mb-2 tw-text-sm tw-font-bold tw-text-slate-700">生成模型</div>
-                <select value={model} onChange={(event) => setModel(event.target.value as 'qwen3.5-plus' | 'deepseek-v3.2' | 'kimi-k2.5')} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3 tw-text-sm">
-                  <option value="qwen3.5-plus">qwen3.5-plus</option>
-                  <option value="deepseek-v3.2">deepseek-v3.2</option>
-                  <option value="kimi-k2.5">kimi-k2.5</option>
+                <select value={configDraft.model} onChange={(event) => setConfigDraft((current) => ({ ...current, model: event.target.value as HotBaziModel }))} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3 tw-text-sm">
+                  {modelOptions.map((option) => <option key={option} value={option}>{option}</option>)}
                 </select>
               </label>
               <label className="tw-block">
                 <div className="tw-mb-2 tw-text-sm tw-font-bold tw-text-slate-700">本次生成数量</div>
-                <select value={batchSize} onChange={(event) => setBatchSize(event.target.value)} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3 tw-text-sm">
+                <select value={configDraft.batchSize} onChange={(event) => setConfigDraft((current) => ({ ...current, batchSize: event.target.value }))} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3 tw-text-sm">
                   {batchSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
               </label>
+            </div>
+            <div className="tw-mt-5 tw-flex tw-items-center tw-justify-between tw-gap-3">
+              <button type="button" onClick={resetConfigDraft} className="tw-rounded-xl tw-border tw-border-slate-200 tw-bg-white tw-px-4 tw-py-2 tw-text-sm tw-font-bold tw-text-slate-700">
+                重置
+              </button>
+              <div className="tw-ml-auto tw-flex tw-gap-2">
+                <button type="button" onClick={closeConfigModal} className="tw-rounded-xl tw-border tw-border-slate-200 tw-bg-white tw-px-4 tw-py-2 tw-text-sm tw-font-bold tw-text-slate-700">
+                  取消
+                </button>
+                <button type="button" onClick={saveConfigDraft} className="tw-rounded-xl tw-bg-slate-900 tw-px-4 tw-py-2 tw-text-sm tw-font-bold tw-text-white">
+                  保存
+                </button>
+              </div>
             </div>
 
           </div>
