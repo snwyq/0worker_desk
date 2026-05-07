@@ -53,8 +53,8 @@ describe('HotBaziService', () => {
     expect(result.createdContents).toBe(2);
     expect(result.createdTasks).toBe(2);
 
-    const tasks = db.hotBaziTasks.list().sort((a, b) => a.id - b.id);
-    const contents = db.contentItems.list().sort((a, b) => a.id - b.id);
+    const tasks = db.hotBaziTasks.list().sort((a: any, b: any) => a.id - b.id);
+    const contents = db.contentItems.list().sort((a: any, b: any) => a.id - b.id);
 
     expect(tasks[0]?.scheduleRuleJson).toEqual({});
     expect(tasks[0]?.mediaPathsJson).toEqual([]);

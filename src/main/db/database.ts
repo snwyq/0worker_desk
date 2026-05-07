@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import Database from 'better-sqlite3';
 import { schemaSql } from './schema.js';
 import { normalizePublishMediaPath } from '../../shared/mediaPaths.js';
+import { SchedulingEngine } from '../core/workflow/SchedulingEngine.js';
 import type {
   Account,
   AiPlugin,
@@ -18,37 +19,29 @@ import type {
   CreateAccountInput,
   CreateContentItemInput,
   CreateContentStyleInput,
-  CreateDispatchRuleProfileInput,
   CreateDistributionTaskInput,
   CreatePostInput,
   CreatePublishRunInput,
   CreateReviewItemInput,
-  DispatchCadencePreset,
-  DispatchConflictStrategy,
-  DispatchQuietHour,
   DispatchSimulationEntry,
-  DispatchWindow,
-  DistributionTask,
-  DispatchRuleProfile,
-  GenerateHotBaziBatchResult,
-  HotPerson,
-  HotBaziTask,
-  Platform,
-  Post,
-  PublishRun,
-  ReviewItem,
-  SourceColumn,
-  CreateHotBaziTaskInput,
-  UpsertHotPersonInput,
-  UpdateAccountInput,
-  UpdateContentItemInput,
-  UpdateContentStyleInput,
-  UpdateDispatchRuleProfileInput,
-  UpdateDistributionTaskInput,
-  UpdateHotBaziTaskInput,
   PublishingStrategy,
   CreatePublishingStrategyInput,
   UpdatePublishingStrategyInput,
+  Post,
+  Platform,
+  ReviewItem,
+  DistributionTask,
+  PublishRun,
+  HotPerson,
+  HotBaziTask,
+  SourceColumn,
+  UpdateAccountInput,
+  UpdateContentStyleInput,
+  UpdateContentItemInput,
+  UpdateDistributionTaskInput,
+  UpsertHotPersonInput,
+  CreateHotBaziTaskInput,
+  UpdateHotBaziTaskInput,
 } from '../../shared/types.js';
 
 function now() {
@@ -321,59 +314,6 @@ function mapHotBaziTask(row: Record<string, unknown>): HotBaziTask {
   };
 }
 
-function mapDispatchRuleProfile(row: Record<string, unknown>): DispatchRuleProfile {
-  const rawWindows = parseJsonArray<DispatchWindow>(row.windowsJson ?? '[]');
-  const windows: DispatchWindow[] = rawWindows.map((w) => ({
-    label: String(w?.label ?? ''),
-    weekdays: Array.isArray(w?.weekdays) ? (w.weekdays as number[]).filter((d) => Number.isInteger(d) && d >= 1 && d <= 7) : [1, 2, 3, 4, 5, 6, 7],
-    start: String(w?.start ?? '09:00'),
-    end: String(w?.end ?? '23:00'),
-    weight: Number.isFinite(w?.weight) ? Number(w.weight) : 1,
-  }));
-  const rawQuiet = parseJsonArray<DispatchQuietHour>(row.quietHoursJson ?? '[]');
-  const quietHours: DispatchQuietHour[] = rawQuiet.map((q) => ({
-    weekdays: Array.isArray(q?.weekdays) ? (q.weekdays as number[]).filter((d) => Number.isInteger(d) && d >= 1 && d <= 7) : [],
-    start: String(q?.start ?? '00:00'),
-    end: String(q?.end ?? '07:00'),
-  }));
-  const blackoutDates = parseJsonArray<string>(row.blackoutDatesJson ?? '[]').map(String);
-  const sourceColumnIds = parseJsonArray<string>(row.sourceColumnIdsJson ?? '[]').map(String);
-  const cadenceRaw = String(row.cadencePreset ?? 'custom');
-  const cadencePreset: DispatchCadencePreset = (['low', 'normal', 'high', 'intensive', 'custom'] as const).includes(cadenceRaw as DispatchCadencePreset)
-    ? (cadenceRaw as DispatchCadencePreset)
-    : 'custom';
-  const conflictRaw = String(row.onConflict ?? 'defer');
-  const onConflict: DispatchConflictStrategy = (['defer', 'preempt', 'drop', 'returnToReview'] as const).includes(conflictRaw as DispatchConflictStrategy)
-    ? (conflictRaw as DispatchConflictStrategy)
-    : 'defer';
-  return {
-    id: Number(row.id),
-    name: String(row.name),
-    description: String(row.description ?? ''),
-    pluginCode: String(row.pluginCode ?? ''),
-    workflowCode: String(row.workflowCode ?? ''),
-    styleId: String(row.styleId ?? ''),
-    source: String(row.source ?? ''),
-    enqueueSource: String(row.enqueueSource ?? ''),
-    dailyLimit: Number(row.dailyLimit ?? 0),
-    minIntervalMinutes: Number(row.minIntervalMinutes ?? 30),
-    timeWindowStart: String(row.timeWindowStart ?? '09:00'),
-    timeWindowEnd: String(row.timeWindowEnd ?? '23:00'),
-    priority: Number(row.priority ?? 0),
-    enabled: Number(row.enabled ?? 1) === 1,
-    cadencePreset,
-    weeklyLimit: Number(row.weeklyLimit ?? 0),
-    jitterMinutes: Number(row.jitterMinutes ?? 0),
-    windows,
-    quietHours,
-    blackoutDates,
-    sameStyleMinGapMinutes: Number(row.sameStyleMinGapMinutes ?? 0),
-    onConflict,
-    sourceColumnIds,
-    createdAt: String(row.createdAt),
-    updatedAt: String(row.updatedAt),
-  };
-}
 
 function mapPublicFigureEvidence(row: Record<string, unknown>) {
   return {
@@ -789,248 +729,9 @@ function seedDefaultContentStyles(sqlite: Database.Database, timestamp: string) 
   }
 }
 
-export interface PresetCadenceValues {
-  dailyLimit: number;
-  minIntervalMinutes: number;
-  jitterMinutes: number;
-}
-
-export const CADENCE_PRESET_VALUES: Record<DispatchCadencePreset, PresetCadenceValues | null> = {
-  low: { dailyLimit: 2, minIntervalMinutes: 240, jitterMinutes: 20 },
-  normal: { dailyLimit: 5, minIntervalMinutes: 90, jitterMinutes: 15 },
-  high: { dailyLimit: 10, minIntervalMinutes: 45, jitterMinutes: 10 },
-  intensive: { dailyLimit: 20, minIntervalMinutes: 20, jitterMinutes: 5 },
-  custom: null,
-};
-
-function defaultWindowsFromLegacy(start: string, end: string): DispatchWindow[] {
-  return [{
-    label: '默认窗口',
-    weekdays: [1, 2, 3, 4, 5, 6, 7],
-    start,
-    end,
-    weight: 1,
-  }];
-}
-
-export interface ResolvedRuleColumns {
-  pluginCode: string;
-  workflowCode: string;
-  styleId: string;
-  source: string;
-  enqueueSource: string;
-  cadencePreset: DispatchCadencePreset;
-  windows: DispatchWindow[];
-  quietHours: DispatchQuietHour[];
-  blackoutDates: string[];
-  onConflict: DispatchConflictStrategy;
-  sourceColumnIds: string[];
-}
-
-export function resolveRuleColumnsForWrite(input: CreateDispatchRuleProfileInput): ResolvedRuleColumns {
-  const sourceColumnIds = (input.sourceColumnIds ?? []).filter(Boolean);
-  const firstColumn = sourceColumnIds.length
-    ? BUILTIN_SOURCE_COLUMNS.find((c) => c.id === sourceColumnIds[0]) ?? null
-    : null;
-  const legacyPlugin = input.pluginCode ?? firstColumn?.pluginCode ?? '';
-  const legacyWorkflow = input.workflowCode ?? firstColumn?.workflowCode ?? '';
-  const legacyStyle = input.styleId ?? firstColumn?.styleId ?? '';
-  const legacySource = input.source ?? firstColumn?.source ?? '';
-  const legacyEnqueue = input.enqueueSource ?? firstColumn?.enqueueSource ?? '';
-  const cadencePreset: DispatchCadencePreset = input.cadencePreset ?? 'custom';
-  const windows = input.windows && input.windows.length
-    ? input.windows
-    : defaultWindowsFromLegacy(input.timeWindowStart ?? '09:00', input.timeWindowEnd ?? '23:00');
-  return {
-    pluginCode: legacyPlugin,
-    workflowCode: legacyWorkflow,
-    styleId: legacyStyle,
-    source: legacySource,
-    enqueueSource: legacyEnqueue,
-    cadencePreset,
-    windows,
-    quietHours: input.quietHours ?? [],
-    blackoutDates: input.blackoutDates ?? [],
-    onConflict: input.onConflict ?? 'defer',
-    sourceColumnIds,
-  };
-}
-
-function seedDefaultDispatchRules(sqlite: Database.Database, timestamp: string) {
-  const rules: Array<{
-    name: string;
-    description: string;
-    pluginCode: string;
-    workflowCode: string;
-    styleId: string;
-    source: string;
-    enqueueSource: string;
-    dailyLimit: number;
-    minIntervalMinutes: number;
-    timeWindowStart: string;
-    timeWindowEnd: string;
-    priority: number;
-    cadencePreset: DispatchCadencePreset;
-    weeklyLimit: number;
-    jitterMinutes: number;
-    windows: DispatchWindow[];
-    quietHours: DispatchQuietHour[];
-    blackoutDates: string[];
-    sameStyleMinGapMinutes: number;
-    onConflict: DispatchConflictStrategy;
-    sourceColumnIds: string[];
-  }> = [
-    {
-      name: '热点八字/热点人物',
-      description: '热点人物命理与热点八字，控密度保当天热度。',
-      pluginCode: 'maoxiaoxian',
-      workflowCode: 'maoxiaoxian.daily_hot_person',
-      styleId: 'mx_hot_bazi',
-      source: 'ai',
-      enqueueSource: '',
-      dailyLimit: 8,
-      minIntervalMinutes: 45,
-      timeWindowStart: '09:00',
-      timeWindowEnd: '23:00',
-      priority: 100,
-      cadencePreset: 'high',
-      weeklyLimit: 0,
-      jitterMinutes: 8,
-      windows: [
-        { label: '早高峰', weekdays: [1, 2, 3, 4, 5, 6, 7], start: '07:30', end: '09:30', weight: 1.8 },
-        { label: '午间', weekdays: [1, 2, 3, 4, 5, 6, 7], start: '12:00', end: '13:30', weight: 1.3 },
-        { label: '晚高峰', weekdays: [1, 2, 3, 4, 5, 6, 7], start: '19:00', end: '22:30', weight: 1.8 },
-        { label: '常规时段', weekdays: [1, 2, 3, 4, 5, 6, 7], start: '09:30', end: '19:00', weight: 1.0 },
-      ],
-      quietHours: [{ weekdays: [], start: '00:00', end: '07:00' }],
-      blackoutDates: [],
-      sameStyleMinGapMinutes: 30,
-      onConflict: 'defer',
-      sourceColumnIds: ['col_ai_hot_bazi', 'col_ai_hot_person'],
-    },
-    {
-      name: '深度分析/长内容',
-      description: '深度分析与观点型长内容，发布频次更低。',
-      pluginCode: 'maoxiaoxian',
-      workflowCode: 'maoxiaoxian.hot_commentary',
-      styleId: 'mx_sharp_commentary',
-      source: 'ai',
-      enqueueSource: '',
-      dailyLimit: 3,
-      minIntervalMinutes: 120,
-      timeWindowStart: '10:00',
-      timeWindowEnd: '22:00',
-      priority: 90,
-      cadencePreset: 'low',
-      weeklyLimit: 0,
-      jitterMinutes: 15,
-      windows: [
-        { label: '上午黄金', weekdays: [1, 2, 3, 4, 5], start: '10:00', end: '12:00', weight: 1.6 },
-        { label: '晚间黄金', weekdays: [1, 2, 3, 4, 5, 6, 7], start: '20:00', end: '22:00', weight: 1.6 },
-      ],
-      quietHours: [{ weekdays: [], start: '00:00', end: '09:00' }, { weekdays: [], start: '22:00', end: '24:00' }],
-      blackoutDates: [],
-      sameStyleMinGapMinutes: 180,
-      onConflict: 'defer',
-      sourceColumnIds: ['col_ai_sharp_commentary'],
-    },
-    {
-      name: '普通 AI 内容',
-      description: '一般 AI 生成内容的默认节奏。',
-      pluginCode: 'maoxiaoxian',
-      workflowCode: '',
-      styleId: '',
-      source: 'ai',
-      enqueueSource: '',
-      dailyLimit: 5,
-      minIntervalMinutes: 60,
-      timeWindowStart: '09:00',
-      timeWindowEnd: '23:00',
-      priority: 50,
-      cadencePreset: 'normal',
-      weeklyLimit: 0,
-      jitterMinutes: 10,
-      windows: [
-        { label: '白天', weekdays: [1, 2, 3, 4, 5, 6, 7], start: '09:00', end: '23:00', weight: 1 },
-      ],
-      quietHours: [],
-      blackoutDates: [],
-      sameStyleMinGapMinutes: 0,
-      onConflict: 'defer',
-      sourceColumnIds: ['col_ai_writer'],
-    },
-    {
-      name: '手动临时内容',
-      description: '人工或临时插入的内容，保持基本安全间隔。',
-      pluginCode: '',
-      workflowCode: '',
-      styleId: '',
-      source: 'manual',
-      enqueueSource: '',
-      dailyLimit: 0,
-      minIntervalMinutes: 30,
-      timeWindowStart: '09:00',
-      timeWindowEnd: '23:00',
-      priority: 10,
-      cadencePreset: 'custom',
-      weeklyLimit: 0,
-      jitterMinutes: 0,
-      windows: [
-        { label: '全天', weekdays: [1, 2, 3, 4, 5, 6, 7], start: '09:00', end: '23:00', weight: 1 },
-      ],
-      quietHours: [],
-      blackoutDates: [],
-      sameStyleMinGapMinutes: 0,
-      onConflict: 'defer',
-      sourceColumnIds: ['col_manual'],
-    },
-  ];
-
-  const upsert = sqlite.prepare(`
-    INSERT INTO dispatch_rule_profiles (
-      name, description, pluginCode, workflowCode, styleId, source, enqueueSource,
-      dailyLimit, minIntervalMinutes, timeWindowStart, timeWindowEnd, priority,
-      enabled, cadencePreset, weeklyLimit, jitterMinutes, windowsJson, quietHoursJson,
-      blackoutDatesJson, sameStyleMinGapMinutes, onConflict, sourceColumnIdsJson,
-      createdAt, updatedAt
-    )
-    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-    WHERE NOT EXISTS (
-      SELECT 1 FROM dispatch_rule_profiles WHERE name = ?
-    )
-  `);
-
-  for (const rule of rules) {
-    upsert.run(
-      rule.name,
-      rule.description,
-      rule.pluginCode,
-      rule.workflowCode,
-      rule.styleId,
-      rule.source,
-      rule.enqueueSource,
-      rule.dailyLimit,
-      rule.minIntervalMinutes,
-      rule.timeWindowStart,
-      rule.timeWindowEnd,
-      rule.priority,
-      rule.cadencePreset,
-      rule.weeklyLimit,
-      rule.jitterMinutes,
-      JSON.stringify(rule.windows),
-      JSON.stringify(rule.quietHours),
-      JSON.stringify(rule.blackoutDates),
-      rule.sameStyleMinGapMinutes,
-      rule.onConflict,
-      JSON.stringify(rule.sourceColumnIds),
-      timestamp,
-      timestamp,
-      rule.name,
-    );
-  }
-}
 
 export async function createDatabase(filename: string) {
+  let db: AppDatabase;
   if (filename !== ':memory:') {
     fs.mkdirSync(path.dirname(filename), { recursive: true });
   }
@@ -1214,42 +915,8 @@ export async function createDatabase(filename: string) {
     `);
   });
 
-  applyMigration('009_dispatch_rule_profiles', () => {
-    sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS dispatch_rule_profiles (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        description TEXT NOT NULL DEFAULT '',
-        pluginCode TEXT NOT NULL DEFAULT '',
-        workflowCode TEXT NOT NULL DEFAULT '',
-        styleId TEXT NOT NULL DEFAULT '',
-        source TEXT NOT NULL DEFAULT '',
-        enqueueSource TEXT NOT NULL DEFAULT '',
-        dailyLimit INTEGER NOT NULL DEFAULT 0,
-        minIntervalMinutes INTEGER NOT NULL DEFAULT 30,
-        timeWindowStart TEXT NOT NULL DEFAULT '09:00',
-        timeWindowEnd TEXT NOT NULL DEFAULT '23:00',
-        priority INTEGER NOT NULL DEFAULT 0,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        cadencePreset TEXT NOT NULL DEFAULT 'custom',
-        weeklyLimit INTEGER NOT NULL DEFAULT 0,
-        jitterMinutes INTEGER NOT NULL DEFAULT 0,
-        windowsJson TEXT NOT NULL DEFAULT '[]',
-        quietHoursJson TEXT NOT NULL DEFAULT '[]',
-        blackoutDatesJson TEXT NOT NULL DEFAULT '[]',
-        sameStyleMinGapMinutes INTEGER NOT NULL DEFAULT 0,
-        onConflict TEXT NOT NULL DEFAULT 'defer',
-        sourceColumnIdsJson TEXT NOT NULL DEFAULT '[]',
-        createdAt TEXT NOT NULL,
-        updatedAt TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_dispatch_rule_profiles_enabled_priority ON dispatch_rule_profiles(enabled, priority);
-    `);
-    // Seeding is deferred to the brute-force block at the end of createDatabase,
-    // which runs after migration 020 adds the new columns on existing databases.
-  });
 
-  applyMigration('020_source_columns_and_cadence', () => {
+  applyMigration('020_source_columns', () => {
     sqlite.exec(`
       CREATE TABLE IF NOT EXISTS source_columns (
         id TEXT PRIMARY KEY,
@@ -1267,94 +934,12 @@ export async function createDatabase(filename: string) {
       );
       CREATE INDEX IF NOT EXISTS idx_source_columns_sort ON source_columns(sortIndex);
     `);
-    const cadenceColumns: Array<[string, string]> = [
-      ['cadencePreset', "TEXT NOT NULL DEFAULT 'custom'"],
-      ['weeklyLimit', 'INTEGER NOT NULL DEFAULT 0'],
-      ['jitterMinutes', 'INTEGER NOT NULL DEFAULT 0'],
-      ['windowsJson', "TEXT NOT NULL DEFAULT '[]'"],
-      ['quietHoursJson', "TEXT NOT NULL DEFAULT '[]'"],
-      ['blackoutDatesJson', "TEXT NOT NULL DEFAULT '[]'"],
-      ['sameStyleMinGapMinutes', 'INTEGER NOT NULL DEFAULT 0'],
-      ['onConflict', "TEXT NOT NULL DEFAULT 'defer'"],
-      ['sourceColumnIdsJson', "TEXT NOT NULL DEFAULT '[]'"],
-    ];
-    for (const [name, definition] of cadenceColumns) {
-      try {
-        sqlite.prepare(`ALTER TABLE dispatch_rule_profiles ADD COLUMN ${name} ${definition}`).run();
-      } catch (_e) { /* column already exists */ }
-    }
   });
 
   applyMigration('021_seed_source_columns', () => {
     seedSourceColumns(sqlite, now());
   });
 
-  applyMigration('022_backfill_dispatch_rules', () => {
-    const rows = select(`
-      SELECT id, pluginCode, workflowCode, styleId, source, enqueueSource,
-             timeWindowStart, timeWindowEnd,
-             sourceColumnIdsJson, windowsJson
-      FROM dispatch_rule_profiles
-      WHERE sourceColumnIdsJson IS NULL OR sourceColumnIdsJson = '' OR sourceColumnIdsJson = '[]'
-         OR windowsJson IS NULL OR windowsJson = '' OR windowsJson = '[]'
-    `);
-    if (!rows.length) return;
-    const update = sqlite.prepare(`
-      UPDATE dispatch_rule_profiles
-      SET sourceColumnIdsJson = ?,
-          windowsJson = ?,
-          quietHoursJson = COALESCE(NULLIF(quietHoursJson, ''), '[]'),
-          blackoutDatesJson = COALESCE(NULLIF(blackoutDatesJson, ''), '[]'),
-          cadencePreset = COALESCE(NULLIF(cadencePreset, ''), 'custom'),
-          onConflict = COALESCE(NULLIF(onConflict, ''), 'defer'),
-          updatedAt = ?
-      WHERE id = ?
-    `);
-    let matched = 0;
-    let missing = 0;
-    for (const row of rows) {
-      const legacy = {
-        pluginCode: String(row.pluginCode ?? ''),
-        workflowCode: String(row.workflowCode ?? ''),
-        styleId: String(row.styleId ?? ''),
-        source: String(row.source ?? ''),
-        enqueueSource: String(row.enqueueSource ?? ''),
-      };
-      const existingIds = (() => {
-        try {
-          const parsed = JSON.parse(String(row.sourceColumnIdsJson ?? '[]'));
-          return Array.isArray(parsed) ? parsed.map(String) : [];
-        } catch {
-          return [];
-        }
-      })();
-      const inferred = existingIds.length ? existingIds : (() => {
-        const id = inferSourceColumnId(legacy);
-        if (id) { matched += 1; return [id]; }
-        missing += 1;
-        return [] as string[];
-      })();
-      const existingWindows = (() => {
-        try {
-          const parsed = JSON.parse(String(row.windowsJson ?? '[]'));
-          return Array.isArray(parsed) && parsed.length ? parsed : null;
-        } catch {
-          return null;
-        }
-      })();
-      const windows = existingWindows ?? defaultWindowsFromLegacy(
-        String(row.timeWindowStart ?? '09:00'),
-        String(row.timeWindowEnd ?? '23:00'),
-      );
-      update.run(
-        JSON.stringify(inferred),
-        JSON.stringify(windows),
-        now(),
-        Number(row.id),
-      );
-    }
-    console.log(`[migration 022] backfilled ${rows.length} dispatch rule(s): matched=${matched}, no-column-match=${missing}`);
-  });
 
   // ---------------------------------------------------------
   // 强力硬编码注入 (Brute Force Seed)
@@ -1364,25 +949,6 @@ export async function createDatabase(filename: string) {
   seedMaoxiaoxianPlugin(sqlite, ts);
   seedDefaultContentStyles(sqlite, ts);
   sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS dispatch_rule_profiles (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      pluginCode TEXT NOT NULL DEFAULT '',
-      workflowCode TEXT NOT NULL DEFAULT '',
-      styleId TEXT NOT NULL DEFAULT '',
-      source TEXT NOT NULL DEFAULT '',
-      enqueueSource TEXT NOT NULL DEFAULT '',
-      dailyLimit INTEGER NOT NULL DEFAULT 0,
-      minIntervalMinutes INTEGER NOT NULL DEFAULT 30,
-      timeWindowStart TEXT NOT NULL DEFAULT '09:00',
-      timeWindowEnd TEXT NOT NULL DEFAULT '23:00',
-      priority INTEGER NOT NULL DEFAULT 0,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      createdAt TEXT NOT NULL,
-      updatedAt TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_dispatch_rule_profiles_enabled_priority ON dispatch_rule_profiles(enabled, priority);
     CREATE TABLE IF NOT EXISTS source_columns (
       id TEXT PRIMARY KEY,
       label TEXT NOT NULL,
@@ -1399,65 +965,11 @@ export async function createDatabase(filename: string) {
     );
     CREATE INDEX IF NOT EXISTS idx_source_columns_sort ON source_columns(sortIndex);
   `);
-  for (const [name, definition] of [
-    ['cadencePreset', "TEXT NOT NULL DEFAULT 'custom'"],
-    ['weeklyLimit', 'INTEGER NOT NULL DEFAULT 0'],
-    ['jitterMinutes', 'INTEGER NOT NULL DEFAULT 0'],
-    ['windowsJson', "TEXT NOT NULL DEFAULT '[]'"],
-    ['quietHoursJson', "TEXT NOT NULL DEFAULT '[]'"],
-    ['blackoutDatesJson', "TEXT NOT NULL DEFAULT '[]'"],
-    ['sameStyleMinGapMinutes', 'INTEGER NOT NULL DEFAULT 0'],
-    ['onConflict', "TEXT NOT NULL DEFAULT 'defer'"],
-    ['sourceColumnIdsJson', "TEXT NOT NULL DEFAULT '[]'"],
-  ] as Array<[string, string]>) {
-    try {
-      sqlite.prepare(`ALTER TABLE dispatch_rule_profiles ADD COLUMN ${name} ${definition}`).run();
-    } catch (_e) { /* column already exists */ }
-  }
-  seedDefaultDispatchRules(sqlite, ts);
   seedSourceColumns(sqlite, ts);
 
   // 强制补全 API Key 设置项
   upsertSetting('ai.dashscopeKey', process.env.DASH_SCOPE_API_KEY || 'sk-59063e5f9c6d4cdf9d7e1803fa18ae39', 'Aliyun DashScope API Key.');
   upsertSetting('ai.apiyiKey', process.env.API_YI_KEY || 'sk-w4r7SeqXczkv2ZBlFaC0Ab837fEa4a3c8266C33aF37dD1Ce', 'APIYi (Gemini/OpenAI) API Key.');
-
-  function getNumberPolicyValue(source: Record<string, unknown> | undefined, key: string): number | null {
-    const value = source?.[key];
-    return typeof value === 'number' && Number.isFinite(value) ? value : null;
-  }
-
-  function readContentStyle(content: ContentItem): ContentStyle | null {
-    if (!content.styleId) {
-      return null;
-    }
-    const styleRow = sqlite.prepare('SELECT * FROM content_styles WHERE id = ?').get(content.styleId);
-    return styleRow ? mapContentStyle(styleRow as Record<string, unknown>) : null;
-  }
-
-  function parseTimeOfDay(value: string, fallback: string): { hour: number; minute: number; label: string } {
-    const source = /^\d{2}:\d{2}$/.test(value) ? value : fallback;
-    const [hour, minute] = source.split(':').map(Number);
-    return { hour, minute, label: source };
-  }
-
-  function setUtcTime(date: Date, label: string): Date {
-    const time = parseTimeOfDay(label, '09:00');
-    const next = new Date(date);
-    next.setUTCHours(time.hour, time.minute, 0, 0);
-    return next;
-  }
-
-  function addMinutes(date: Date, minutes: number): Date {
-    return new Date(date.getTime() + minutes * 60_000);
-  }
-
-  function dayBounds(date: Date): { start: string; end: string } {
-    const start = new Date(date);
-    start.setUTCHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setUTCDate(end.getUTCDate() + 1);
-    return { start: start.toISOString(), end: end.toISOString() };
-  }
 
   function getWorkflowCodeForContent(content: ContentItem, style: ContentStyle | null): string {
     if (style?.workflowCode) {
@@ -1467,580 +979,29 @@ export async function createDatabase(filename: string) {
     return typeof workflowCode === 'string' ? workflowCode : '';
   }
 
-  function legacyTupleMatches(
-    expected: { pluginCode?: string; workflowCode?: string; styleId?: string; source?: string; enqueueSource?: string },
-    actual: { pluginCode: string; workflowCode: string; styleId: string; source: string; enqueueSource: string },
-  ): boolean {
-    const checks: Array<[string, string]> = [
-      [expected.pluginCode ?? '', actual.pluginCode],
-      [expected.workflowCode ?? '', actual.workflowCode],
-      [expected.styleId ?? '', actual.styleId],
-      [expected.source ?? '', actual.source],
-      [expected.enqueueSource ?? '', actual.enqueueSource],
-    ];
-    return checks.every(([exp, act]) => !exp || exp === act);
-  }
-
-  function ruleMatches(rule: DispatchRuleProfile, content: ContentItem, style: ContentStyle | null, enqueueSource: string): boolean {
-    const workflowCode = getWorkflowCodeForContent(content, style);
-    const actual = {
-      pluginCode: content.pluginCode,
-      workflowCode,
-      styleId: content.styleId,
-      source: content.source,
-      enqueueSource,
-    };
-
-    if (rule.sourceColumnIds && rule.sourceColumnIds.length) {
-      // Primary: match via source column dictionary (OR across columns).
-      for (const id of rule.sourceColumnIds) {
-        const column = BUILTIN_SOURCE_COLUMNS.find((c) => c.id === id);
-        if (!column) continue;
-        if (legacyTupleMatches(column, actual)) {
-          return true;
-        }
-      }
-      return false;
-    }
-
-    // Fallback: legacy tuple on the rule itself.
-    return legacyTupleMatches(rule, actual);
-  }
-
-  function getRuleSpecificity(rule: DispatchRuleProfile): number {
-    if (rule.sourceColumnIds && rule.sourceColumnIds.length) {
-      let best = 0;
-      for (const id of rule.sourceColumnIds) {
-        const column = BUILTIN_SOURCE_COLUMNS.find((c) => c.id === id);
-        if (!column) continue;
-        const count = [column.pluginCode, column.workflowCode, column.styleId, column.source, column.enqueueSource]
-          .filter((value) => value.trim()).length;
-        if (count > best) best = count;
-      }
-      return best;
-    }
-    return [rule.pluginCode, rule.workflowCode, rule.styleId, rule.source, rule.enqueueSource]
-      .filter((value) => value.trim()).length;
-  }
-
-  type ResolvedDispatchPolicy = {
-    ruleId: number | null;
-    ruleName: string;
-    matchedBy: 'column_rule' | 'style_policy' | 'account_policy' | 'system_default';
-    dailyLimit: number;
-    minIntervalMinutes: number;
-    timeWindowStart: string;
-    timeWindowEnd: string;
-    cadencePreset: DispatchCadencePreset;
-    weeklyLimit: number;
-    jitterMinutes: number;
-    windows: DispatchWindow[];
-    quietHours: DispatchQuietHour[];
-    blackoutDates: string[];
-    sameStyleMinGapMinutes: number;
-    onConflict: DispatchConflictStrategy;
-  };
-
-  function makeDefaultWindow(start: string, end: string): DispatchWindow {
-    return { label: '默认窗口', weekdays: [1, 2, 3, 4, 5, 6, 7], start, end, weight: 1 };
-  }
-
-  function resolveDispatchPolicy(contentId: number, accountId: number, enqueueSource: string): ResolvedDispatchPolicy {
-    const content = mapContentItem(firstRow(sqlite.prepare('SELECT * FROM content_items WHERE id = ?').get(contentId)));
-    const style = readContentStyle(content);
-    const rules = select(`
-      SELECT * FROM dispatch_rule_profiles
-      WHERE enabled = 1
-      ORDER BY priority DESC, id ASC
-    `).map(mapDispatchRuleProfile);
-    const matchedRule = rules
-      .filter((rule) => ruleMatches(rule, content, style, enqueueSource))
-      .sort((a, b) => getRuleSpecificity(b) - getRuleSpecificity(a) || b.priority - a.priority || a.id - b.id)[0];
-    if (matchedRule) {
-      const windows = matchedRule.windows && matchedRule.windows.length
-        ? matchedRule.windows
-        : [makeDefaultWindow(matchedRule.timeWindowStart, matchedRule.timeWindowEnd)];
-      return {
-        ruleId: matchedRule.id,
-        ruleName: matchedRule.name,
-        matchedBy: 'column_rule',
-        dailyLimit: matchedRule.dailyLimit,
-        minIntervalMinutes: matchedRule.minIntervalMinutes,
-        timeWindowStart: matchedRule.timeWindowStart,
-        timeWindowEnd: matchedRule.timeWindowEnd,
-        cadencePreset: matchedRule.cadencePreset,
-        weeklyLimit: matchedRule.weeklyLimit,
-        jitterMinutes: matchedRule.jitterMinutes,
-        windows,
-        quietHours: matchedRule.quietHours,
-        blackoutDates: matchedRule.blackoutDates,
-        sameStyleMinGapMinutes: matchedRule.sameStyleMinGapMinutes,
-        onConflict: matchedRule.onConflict,
-      };
-    }
-
-    const styleInterval = getNumberPolicyValue(style?.dispatchPolicyJson, 'minIntervalMinutes');
-    const styleDaily = getNumberPolicyValue(style?.dispatchPolicyJson, 'dailyLimit');
-    if (styleInterval !== null || styleDaily !== null) {
-      return {
-        ruleId: null,
-        ruleName: style?.name || '风格调度策略',
-        matchedBy: 'style_policy',
-        dailyLimit: styleDaily ?? 0,
-        minIntervalMinutes: styleInterval ?? 30,
-        timeWindowStart: '00:00',
-        timeWindowEnd: '23:59',
-        cadencePreset: 'custom',
-        weeklyLimit: 0,
-        jitterMinutes: 0,
-        windows: [makeDefaultWindow('00:00', '23:59')],
-        quietHours: [],
-        blackoutDates: [],
-        sameStyleMinGapMinutes: 0,
-        onConflict: 'defer',
-      };
-    }
-
-    const accountRow = sqlite.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId);
-    const account = accountRow ? mapAccount(accountRow as Record<string, unknown>) : null;
-    const dispatchPolicy = account?.aiConfigJson.dispatchPolicy;
-    const accountPolicy = dispatchPolicy && typeof dispatchPolicy === 'object'
-      ? dispatchPolicy as Record<string, unknown>
-      : {};
-    const accountInterval = getNumberPolicyValue(accountPolicy, 'minIntervalMinutes');
-    const accountDaily = getNumberPolicyValue(accountPolicy, 'dailyLimit');
-    if (accountInterval !== null || accountDaily !== null) {
-      return {
-        ruleId: null,
-        ruleName: '账号调度策略',
-        matchedBy: 'account_policy',
-        dailyLimit: accountDaily ?? 0,
-        minIntervalMinutes: accountInterval ?? 30,
-        timeWindowStart: '00:00',
-        timeWindowEnd: '23:59',
-        cadencePreset: 'custom',
-        weeklyLimit: 0,
-        jitterMinutes: 0,
-        windows: [makeDefaultWindow('00:00', '23:59')],
-        quietHours: [],
-        blackoutDates: [],
-        sameStyleMinGapMinutes: 0,
-        onConflict: 'defer',
-      };
-    }
-
-    return {
-      ruleId: null,
-      ruleName: '系统默认调度',
-      matchedBy: 'system_default',
-      dailyLimit: 0,
-      minIntervalMinutes: 30,
-      timeWindowStart: '00:00',
-      timeWindowEnd: '23:59',
-      cadencePreset: 'custom',
-      weeklyLimit: 0,
-      jitterMinutes: 0,
-      windows: [makeDefaultWindow('00:00', '23:59')],
-      quietHours: [],
-      blackoutDates: [],
-      sameStyleMinGapMinutes: 0,
-      onConflict: 'defer',
-    };
-  }
-
-  function hasDailyCapacity(accountId: number, candidate: Date, dailyLimit: number, excludeTaskId: number | null): boolean {
-    if (!dailyLimit || dailyLimit <= 0) {
-      return true;
-    }
-    const bounds = dayBounds(candidate);
-    const row = sqlite.prepare(`
-      SELECT COUNT(*) AS count FROM distribution_tasks
-      WHERE accountId = ?
-        AND scheduledAt >= ?
-        AND scheduledAt < ?
-        AND status IN ('queued', 'publishing', 'published')
-        AND (? IS NULL OR id <> ?)
-    `).get(accountId, bounds.start, bounds.end, excludeTaskId, excludeTaskId) as { count?: number } | undefined;
-    return Number(row?.count ?? 0) < dailyLimit;
-  }
-
-  function hasIntervalCapacity(accountId: number, candidate: Date, minIntervalMinutes: number, excludeTaskId: number | null): boolean {
-    if (!minIntervalMinutes || minIntervalMinutes <= 0) {
-      return true;
-    }
-    const lowerBound = addMinutes(candidate, -minIntervalMinutes).toISOString();
-    const upperBound = addMinutes(candidate, minIntervalMinutes).toISOString();
-    const row = sqlite.prepare(`
-      SELECT id FROM distribution_tasks
-      WHERE accountId = ?
-        AND scheduledAt > ?
-        AND scheduledAt < ?
-        AND status IN ('queued', 'publishing')
-        AND (? IS NULL OR id <> ?)
-      LIMIT 1
-    `).get(accountId, lowerBound, upperBound, excludeTaskId, excludeTaskId);
-    return !row;
-  }
-
-  function alignToDispatchWindow(candidate: Date, policy: ResolvedDispatchPolicy): Date {
-    const windowStart = setUtcTime(candidate, policy.timeWindowStart);
-    const windowEnd = setUtcTime(candidate, policy.timeWindowEnd);
-    if (candidate < windowStart) {
-      return windowStart;
-    }
-    if (candidate > windowEnd) {
-      const nextDay = new Date(candidate);
-      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-      return setUtcTime(nextDay, policy.timeWindowStart);
-    }
-    return candidate;
-  }
-
-  // --- V2 scheduler helpers ------------------------------------------------
-
-  function isoWeekdayUtc(date: Date): number {
-    const jsDow = date.getUTCDay(); // 0..6, Sun=0
-    return ((jsDow + 6) % 7) + 1;   // 1..7, Mon=1, Sun=7
-  }
-
-  function parseTimeToMinutes(hhmm: string): number {
-    const [h, m] = hhmm.split(':').map((s) => Number(s) || 0);
-    return h * 60 + m;
-  }
-
-  function minutesOfDayUtc(date: Date): number {
-    return date.getUTCHours() * 60 + date.getUTCMinutes();
-  }
-
-  function formatDateYmdUtc(date: Date): string {
-    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
-  }
-
-  function windowActiveOn(window: DispatchWindow, weekday: number): boolean {
-    if (!window.weekdays || !window.weekdays.length) return true;
-    return window.weekdays.includes(weekday);
-  }
-
-  function candidateInWindow(date: Date, window: DispatchWindow): boolean {
-    if (!windowActiveOn(window, isoWeekdayUtc(date))) return false;
-    const mins = minutesOfDayUtc(date);
-    return mins >= parseTimeToMinutes(window.start) && mins < parseTimeToMinutes(window.end);
-  }
-
-  function candidateInQuietHours(date: Date, quietHours: DispatchQuietHour[]): boolean {
-    if (!quietHours || !quietHours.length) return false;
-    const mins = minutesOfDayUtc(date);
-    const dow = isoWeekdayUtc(date);
-    for (const q of quietHours) {
-      if (q.weekdays && q.weekdays.length && !q.weekdays.includes(dow)) continue;
-      const start = parseTimeToMinutes(q.start);
-      const end = parseTimeToMinutes(q.end);
-      if (start <= end) {
-        if (mins >= start && mins < end) return true;
-      } else {
-        // wraps across midnight
-        if (mins >= start || mins < end) return true;
-      }
-    }
-    return false;
-  }
-
-  function candidateInBlackout(date: Date, blackoutDates: string[]): boolean {
-    if (!blackoutDates || !blackoutDates.length) return false;
-    const ymd = formatDateYmdUtc(date);
-    return blackoutDates.includes(ymd);
-  }
-
-  interface ScoredCandidate {
-    date: Date;
-    window: DispatchWindow;
-    weight: number;
-  }
-
-  function generateCandidates(policy: ResolvedDispatchPolicy, nowIso: string, horizonDays: number, stepMinutes = 15): ScoredCandidate[] {
-    const out: ScoredCandidate[] = [];
-    if (!policy.windows.length) return out;
-    const start = new Date(nowIso);
-    const end = new Date(start.getTime() + horizonDays * 86400_000);
-    const dayStart = new Date(start);
-    dayStart.setUTCHours(0, 0, 0, 0);
-    for (let day = new Date(dayStart); day < end; day.setUTCDate(day.getUTCDate() + 1)) {
-      if (candidateInBlackout(day, policy.blackoutDates)) continue;
-      const weekday = isoWeekdayUtc(day);
-      for (const window of policy.windows) {
-        if (!windowActiveOn(window, weekday)) continue;
-        const winStart = new Date(day);
-        winStart.setUTCHours(0, 0, 0, 0);
-        winStart.setUTCMinutes(parseTimeToMinutes(window.start));
-        const winEnd = new Date(day);
-        winEnd.setUTCHours(0, 0, 0, 0);
-        winEnd.setUTCMinutes(parseTimeToMinutes(window.end));
-        for (let cur = new Date(Math.max(winStart.getTime(), start.getTime())); cur < winEnd; cur = new Date(cur.getTime() + stepMinutes * 60_000)) {
-          if (cur > end) break;
-          if (candidateInQuietHours(cur, policy.quietHours)) continue;
-          out.push({ date: new Date(cur), window, weight: Number.isFinite(window.weight) ? window.weight : 1 });
-          if (out.length > 2000) return out; // hard cap
-        }
-      }
-    }
-    return out;
-  }
-
-  function hasWeeklyCapacity(accountId: number, candidate: Date, weeklyLimit: number, excludeTaskId: number | null): boolean {
-    if (!weeklyLimit || weeklyLimit <= 0) return true;
-    const dow = isoWeekdayUtc(candidate);
-    const weekStart = new Date(candidate);
-    weekStart.setUTCHours(0, 0, 0, 0);
-    weekStart.setUTCDate(weekStart.getUTCDate() - (dow - 1));
-    const weekEnd = new Date(weekStart);
-    weekEnd.setUTCDate(weekEnd.getUTCDate() + 7);
-    const row = sqlite.prepare(`
-      SELECT COUNT(*) AS count FROM distribution_tasks
-      WHERE accountId = ?
-        AND scheduledAt >= ?
-        AND scheduledAt < ?
-        AND status IN ('queued', 'publishing', 'published')
-        AND (? IS NULL OR id <> ?)
-    `).get(accountId, weekStart.toISOString(), weekEnd.toISOString(), excludeTaskId, excludeTaskId) as { count?: number } | undefined;
-    return Number(row?.count ?? 0) < weeklyLimit;
-  }
-
-  function hasSameStyleGap(
-    contentId: number,
-    accountId: number,
-    candidate: Date,
-    gapMinutes: number,
-    excludeTaskId: number | null,
-  ): boolean {
-    if (!gapMinutes || gapMinutes <= 0) return true;
-    const contentRow = sqlite.prepare('SELECT styleId FROM content_items WHERE id = ?').get(contentId) as { styleId?: string } | undefined;
-    const styleId = String(contentRow?.styleId ?? '');
-    if (!styleId) return true;
-    const lowerBound = addMinutes(candidate, -gapMinutes).toISOString();
-    const upperBound = addMinutes(candidate, gapMinutes).toISOString();
-    const row = sqlite.prepare(`
-      SELECT dt.id FROM distribution_tasks dt
-      JOIN content_items ci ON ci.id = dt.contentId
-      WHERE dt.accountId = ?
-        AND ci.styleId = ?
-        AND dt.scheduledAt > ?
-        AND dt.scheduledAt < ?
-        AND dt.status IN ('queued', 'publishing', 'published')
-        AND (? IS NULL OR dt.id <> ?)
-      LIMIT 1
-    `).get(accountId, styleId, lowerBound, upperBound, excludeTaskId, excludeTaskId);
-    return !row;
-  }
-
-  function countTasksInRange(accountId: number, start: Date, end: Date): number {
-    const row = sqlite.prepare(`
-      SELECT COUNT(*) AS count FROM distribution_tasks
-      WHERE accountId = ?
-        AND scheduledAt >= ?
-        AND scheduledAt < ?
-        AND status IN ('queued', 'publishing', 'published')
-    `).get(accountId, start.toISOString(), end.toISOString()) as { count?: number } | undefined;
-    return Number(row?.count ?? 0);
-  }
-
-  function getNearestTaskDistanceMinutes(accountId: number, candidate: Date): number {
-    const row = sqlite.prepare(`
-      SELECT scheduledAt FROM distribution_tasks
-      WHERE accountId = ?
-        AND status IN ('queued', 'publishing', 'published')
-      ORDER BY ABS(strftime('%s', scheduledAt) - strftime('%s', ?)) ASC
-      LIMIT 1
-    `).get(accountId, candidate.toISOString()) as { scheduledAt?: string } | undefined;
-    if (!row?.scheduledAt) return Number.POSITIVE_INFINITY;
-    return Math.abs(new Date(row.scheduledAt).getTime() - candidate.getTime()) / 60_000;
-  }
-
-  let rngImpl: () => number = Math.random;
-  function setRng(fn: () => number) { rngImpl = fn; }
-  function applyJitter(date: Date, jitterMinutes: number): Date {
-    if (!jitterMinutes || jitterMinutes <= 0) return date;
-    const delta = (rngImpl() * 2 - 1) * jitterMinutes;
-    return new Date(date.getTime() + delta * 60_000);
-  }
-
-  function scoreCandidate(candidate: ScoredCandidate, accountId: number, policy: ResolvedDispatchPolicy): number {
-    const pad = 2 * 60 * 60_000; // ±2h
-    const start = new Date(candidate.date.getTime() - pad);
-    const end = new Date(candidate.date.getTime() + pad);
-    const density = countTasksInRange(accountId, start, end);
-    const densityPenalty = density / 10;
-    const nearestMinutes = getNearestTaskDistanceMinutes(accountId, candidate.date);
-    const proximityPenalty = nearestMinutes === Number.POSITIVE_INFINITY
-      ? 0
-      : Math.min(1, policy.minIntervalMinutes / Math.max(15, nearestMinutes));
-    return candidate.weight - densityPenalty - proximityPenalty;
-  }
-
-  function formatHumanTimestamp(date: Date): string {
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
-  }
-
-  function buildExplanation(
-    policy: ResolvedDispatchPolicy,
-    accountId: number,
-    scheduledAt: Date,
-    windowLabel: string,
-    windowWeight: number,
-    jitterApplied: number,
-  ): string {
-    const todayStart = new Date(scheduledAt);
-    todayStart.setUTCHours(0, 0, 0, 0);
-    const nextDay = new Date(todayStart);
-    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-    const dailyCount = countTasksInRange(accountId, todayStart, nextDay);
-    const nearestMinutes = getNearestTaskDistanceMinutes(accountId, scheduledAt);
-    const gapText = nearestMinutes === Number.POSITIVE_INFINITY
-      ? '无相邻任务'
-      : `距最近任务 ${Math.round(nearestMinutes)} 分钟`;
-    const dailyText = policy.dailyLimit > 0
-      ? `本日已排 ${dailyCount}/${policy.dailyLimit} 条`
-      : `本日已排 ${dailyCount} 条`;
-    const intervalText = policy.minIntervalMinutes > 0
-      ? `（最小间隔 ≥ ${policy.minIntervalMinutes} 分钟）`
-      : '';
-    const jitterText = jitterApplied
-      ? `；叠加 ${jitterApplied > 0 ? '+' : ''}${Math.round(jitterApplied)} 分钟抖动`
-      : '';
-    return `按《${policy.ruleName}》规则安排于 ${formatHumanTimestamp(scheduledAt)}。理由：命中「${windowLabel}」(权重 ×${windowWeight})；${dailyText}${intervalText}；${gapText}${jitterText}。`;
-  }
-
-  interface V2Outcome {
-    scheduledAt: string;
-    policy: ResolvedDispatchPolicy;
-    windowLabel: string;
-    weight: number;
-    explanation: string;
-  }
-
-  function filterCandidates(
-    candidates: ScoredCandidate[],
-    accountId: number,
-    contentId: number,
-    policy: ResolvedDispatchPolicy,
-    excludeTaskId: number | null,
-    options: { skipDaily?: boolean; skipWeekly?: boolean } = {},
-  ): ScoredCandidate[] {
-    return candidates.filter((cand) => {
-      if (!options.skipDaily && !hasDailyCapacity(accountId, cand.date, policy.dailyLimit, excludeTaskId)) return false;
-      if (!options.skipWeekly && !hasWeeklyCapacity(accountId, cand.date, policy.weeklyLimit, excludeTaskId)) return false;
-      if (!hasIntervalCapacity(accountId, cand.date, policy.minIntervalMinutes, excludeTaskId)) return false;
-      if (!hasSameStyleGap(contentId, accountId, cand.date, policy.sameStyleMinGapMinutes, excludeTaskId)) return false;
-      return true;
-    });
-  }
-
-  function resolveNextScheduledAtV2(
-    contentId: number,
-    accountId: number,
-    enqueueSource: string,
-    nowIso = now(),
-    excludeTaskId: number | null = null,
-  ): V2Outcome {
-    const policy = resolveDispatchPolicy(contentId, accountId, enqueueSource);
-
-    function attempt(horizonDays: number, skipDaily = false, skipWeekly = false): ScoredCandidate | null {
-      const candidates = generateCandidates(policy, nowIso, horizonDays);
-      if (!candidates.length) return null;
-      const filtered = filterCandidates(candidates, accountId, contentId, policy, excludeTaskId, { skipDaily, skipWeekly });
-      if (!filtered.length) return null;
-      let best: ScoredCandidate | null = null;
-      let bestScore = -Infinity;
-      for (const cand of filtered) {
-        const s = scoreCandidate(cand, accountId, policy);
-        if (s > bestScore) { bestScore = s; best = cand; }
-      }
-      return best;
-    }
-
-    let chosen = attempt(7);
-    if (!chosen) {
-      if (policy.onConflict === 'defer') {
-        chosen = attempt(30);
-        if (!chosen) {
-          throw new Error('SCHEDULE_NO_SLOT: no available slot in the next 30 days for this policy');
-        }
-      } else if (policy.onConflict === 'preempt') {
-        chosen = attempt(30, true, true);
-        if (!chosen) throw new Error('SCHEDULE_NO_SLOT: preempt also found no candidate');
-      } else if (policy.onConflict === 'drop') {
-        throw new Error('SCHEDULE_DROPPED: content dropped per rule onConflict=drop');
-      } else if (policy.onConflict === 'returnToReview') {
-        throw new Error('SCHEDULE_SENT_BACK: content returned to review per rule onConflict=returnToReview');
-      }
-    }
-    if (!chosen) {
-      throw new Error('SCHEDULE_NO_SLOT');
-    }
-
-    const before = chosen.date;
-    const jittered = applyJitter(before, policy.jitterMinutes);
-    const jitterDelta = (jittered.getTime() - before.getTime()) / 60_000;
-    const finalDate = jittered < new Date(nowIso) ? before : jittered; // never schedule in the past
-    const explanation = buildExplanation(policy, accountId, finalDate, chosen.window.label, chosen.weight, jitterDelta);
-    return {
-      scheduledAt: finalDate.toISOString(),
-      policy,
-      windowLabel: chosen.window.label,
-      weight: chosen.weight,
-      explanation,
-    };
-  }
-
-  function resolveNextScheduledAt(
-    contentId: number,
-    accountId: number,
-    enqueueSource: string,
-    nowIso = now(),
-    excludeTaskId: number | null = null,
-  ): { scheduledAt: string; policy: ResolvedDispatchPolicy } {
-    const policy = resolveDispatchPolicy(contentId, accountId, enqueueSource);
-    const minInterval = Math.max(0, policy.minIntervalMinutes || 0);
-    let candidate = alignToDispatchWindow(new Date(nowIso), policy);
-
-    for (let attempt = 0; attempt < 60 * 24 * 45; attempt += 1) {
-      if (
-        hasDailyCapacity(accountId, candidate, policy.dailyLimit, excludeTaskId)
-        && hasIntervalCapacity(accountId, candidate, minInterval, excludeTaskId)
-      ) {
-        return { scheduledAt: candidate.toISOString(), policy };
-      }
-      candidate = alignToDispatchWindow(addMinutes(candidate, Math.max(1, minInterval || 30)), policy);
-    }
-
-    throw new Error('SCHEDULE_ASSIGNMENT_FAILED: no available schedule slot found in the next 45 days');
-  }
-
   function buildDispatchPlan(
-    policy: ResolvedDispatchPolicy,
+    workflowCode: string,
     scheduledAt: string,
     assignedReason: string,
-    extras?: { windowLabel?: string; explanation?: string },
   ) {
     return {
-      ruleId: policy.ruleId,
-      ruleName: policy.ruleName,
-      matchedBy: policy.matchedBy,
-      dailyLimit: policy.dailyLimit,
-      minIntervalMinutes: policy.minIntervalMinutes,
-      timeWindow: {
-        start: policy.timeWindowStart,
-        end: policy.timeWindowEnd,
-      },
-      cadencePreset: policy.cadencePreset,
-      weeklyLimit: policy.weeklyLimit,
-      jitterMinutes: policy.jitterMinutes,
-      onConflict: policy.onConflict,
-      windowLabel: extras?.windowLabel ?? '',
-      explanation: extras?.explanation ?? '',
+      workflowCode,
       scheduledAt,
       assignedReason,
+      explanation: `通过统一调度引擎分配于 ${scheduledAt}`,
     };
+  }
+
+  function getNumberPolicyValue(policy: Record<string, unknown> | undefined, key: string): number | null {
+    if (!policy || typeof policy !== 'object') return null;
+    const val = policy[key];
+    return typeof val === 'number' ? val : null;
+  }
+
+  function readContentStyle(content: ContentItem): ContentStyle | null {
+    if (!content.styleId) return null;
+    const row = sqlite.prepare('SELECT * FROM content_styles WHERE id = ?').get(content.styleId);
+    return row ? mapContentStyle(row as Record<string, unknown>) : null;
   }
 
   function resolveDispatchPolicyValue(accountId: number, contentId: number, key: string): number | null {
@@ -2068,40 +1029,6 @@ export async function createDatabase(filename: string) {
       : null;
   }
 
-  function randomInt(min: number, max: number): number {
-    const lower = Math.ceil(min);
-    const upper = Math.floor(max);
-    if (upper <= lower) {
-      return lower;
-    }
-    return Math.floor(Math.random() * (upper - lower + 1)) + lower;
-  }
-
-  function getNextQueuedDistributionTask(accountId: number): { scheduledAt: string } | null {
-    const row = sqlite.prepare(`
-      SELECT scheduledAt
-      FROM distribution_tasks
-      WHERE accountId = ?
-        AND status IN ('queued', 'publishing')
-      ORDER BY scheduledAt DESC, id DESC
-      LIMIT 1
-    `).get(accountId) as { scheduledAt?: unknown } | undefined;
-    return row?.scheduledAt ? { scheduledAt: String(row.scheduledAt) } : null;
-  }
-
-  function resolveDispatchSeedDelayMinutes(source: string, accountId: number, contentId: number): number {
-    const minIntervalMinutes = resolveDispatchPolicyValue(accountId, contentId, 'minIntervalMinutes');
-    if (minIntervalMinutes && minIntervalMinutes > 0) {
-      return Math.max(5, minIntervalMinutes);
-    }
-
-    return 30;
-  }
-
-  function resolveDispatchScheduledAt(contentId: number, accountId: number, source: string): string {
-    return resolveNextScheduledAt(contentId, accountId, source).scheduledAt;
-  }
-
   function getContentStyleForContent(contentId: number): ContentStyle | null {
     const contentRow = sqlite.prepare('SELECT * FROM content_items WHERE id = ?').get(contentId);
     const content = contentRow ? mapContentItem(contentRow as Record<string, unknown>) : null;
@@ -2111,7 +1038,6 @@ export async function createDatabase(filename: string) {
     const styleRow = sqlite.prepare('SELECT * FROM content_styles WHERE id = ?').get(content.styleId);
     return styleRow ? mapContentStyle(styleRow as Record<string, unknown>) : null;
   }
-
   function assertStyleConsecutiveLimit(
     contentId: number,
     accountId: number,
@@ -2205,30 +1131,6 @@ export async function createDatabase(filename: string) {
 
     assertStyleConsecutiveLimit(contentId, accountId, scheduledAt, status, excludeTaskId);
 
-    const minIntervalMinutes = resolveDispatchPolicyValue(accountId, contentId, 'minIntervalMinutes');
-    if (!minIntervalMinutes || minIntervalMinutes <= 0) {
-      // No interval policy configured for this account/style.
-    } else {
-      const scheduledTime = new Date(scheduledAt).getTime();
-      if (Number.isFinite(scheduledTime)) {
-        const lowerBound = new Date(scheduledTime - minIntervalMinutes * 60_000).toISOString();
-        const upperBound = new Date(scheduledTime + minIntervalMinutes * 60_000).toISOString();
-        const intervalRow = sqlite.prepare(`
-          SELECT id FROM distribution_tasks
-          WHERE accountId = ?
-            AND scheduledAt > ?
-            AND scheduledAt < ?
-            AND status IN ('queued', 'publishing')
-            AND (? IS NULL OR id <> ?)
-          LIMIT 1
-        `).get(accountId, lowerBound, upperBound, excludeTaskId, excludeTaskId);
-
-        if (intervalRow) {
-          throw new Error('SCHEDULE_INTERVAL_CONFLICT: account already has an active distribution task inside the minimum interval');
-        }
-      }
-    }
-
     const dailyLimit = resolveDispatchPolicyValue(accountId, contentId, 'dailyLimit');
     if (!dailyLimit || dailyLimit <= 0) {
       return;
@@ -2267,12 +1169,12 @@ export async function createDatabase(filename: string) {
     }
 
     const account = mapAccount(firstRow(sqlite.prepare('SELECT * FROM accounts WHERE id = ?').get(content.accountId)));
-    const styleRow = content.styleId
-      ? sqlite.prepare('SELECT * FROM content_styles WHERE id = ?').get(content.styleId)
-      : null;
-    const style = styleRow ? mapContentStyle(styleRow as Record<string, unknown>) : null;
-    const assignment = resolveNextScheduledAt(content.id, content.accountId, source);
-    const scheduledAt = assignment.scheduledAt;
+    const style = readContentStyle(content);
+    const workflowCode = getWorkflowCodeForContent(content, style);
+
+    const schedulingEngine = new SchedulingEngine(db);
+    const scheduledAt = schedulingEngine.allocateScheduledTime(workflowCode);
+    
     const timestamp = now();
     const result = sqlite.prepare(`
       INSERT INTO distribution_tasks (contentId, accountId, platform, legacyPostId, scheduledAt, status, platformPayload, createdAt, updatedAt)
@@ -2287,7 +1189,7 @@ export async function createDatabase(filename: string) {
         mediaPaths: content.mediaJson,
         topics: content.topicsJson,
         source,
-        dispatchPlan: buildDispatchPlan(assignment.policy, scheduledAt, `auto-assigned from ${source}`),
+        dispatchPlan: buildDispatchPlan(workflowCode, scheduledAt, `auto-assigned from ${source}`),
         trace: {
           tenantId: content.tenantId,
           pluginCode: content.pluginCode,
@@ -2301,8 +1203,7 @@ export async function createDatabase(filename: string) {
 
     return mapDistributionTask(firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE id = ?').get(result.lastInsertRowid)));
   }
-
-  return {
+  db = {
     migrations: {
       list(): string[] {
         return select('SELECT id FROM schema_migrations ORDER BY appliedAt ASC').map((row) => String(row.id));
@@ -2451,7 +1352,6 @@ export async function createDatabase(filename: string) {
             INSERT INTO content_versions (contentId, title, body, source, createdAt)
             VALUES (?, ?, ?, 'manual', ?)
           `).run(contentResult.lastInsertRowid, input.content.slice(0, 48) || 'Untitled content', input.content, timestamp);
-          assertNoScheduleConflict(Number(contentResult.lastInsertRowid), input.accountId, input.scheduledAt, input.status);
           sqlite.prepare(`
             INSERT INTO distribution_tasks (contentId, accountId, platform, legacyPostId, scheduledAt, status, platformPayload, createdAt, updatedAt)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -2629,7 +1529,6 @@ export async function createDatabase(filename: string) {
         if (!existing) {
           return false;
         }
-        // 检查是否有关联的未完成内容
         const linkedContents = select(
           `SELECT id FROM content_items WHERE styleId = ? AND status NOT IN ('published', 'rejected')`,
           [id],
@@ -2639,122 +1538,6 @@ export async function createDatabase(filename: string) {
         }
         sqlite.prepare('DELETE FROM content_styles WHERE id = ?').run(id);
         return !this.findById(id);
-      },
-    },
-    dispatchRules: {
-      list(): DispatchRuleProfile[] {
-        return select('SELECT * FROM dispatch_rule_profiles ORDER BY priority DESC, id ASC').map(mapDispatchRuleProfile);
-      },
-      findById(id: number): DispatchRuleProfile | null {
-        const row = sqlite.prepare('SELECT * FROM dispatch_rule_profiles WHERE id = ?').get(id);
-        return row ? mapDispatchRuleProfile(row as Record<string, unknown>) : null;
-      },
-      create(input: CreateDispatchRuleProfileInput): DispatchRuleProfile {
-        const timestamp = now();
-        const resolved = resolveRuleColumnsForWrite(input);
-        const result = sqlite.prepare(`
-          INSERT INTO dispatch_rule_profiles (
-            name, description, pluginCode, workflowCode, styleId, source, enqueueSource,
-            dailyLimit, minIntervalMinutes, timeWindowStart, timeWindowEnd, priority,
-            enabled, cadencePreset, weeklyLimit, jitterMinutes, windowsJson, quietHoursJson,
-            blackoutDatesJson, sameStyleMinGapMinutes, onConflict, sourceColumnIdsJson,
-            createdAt, updatedAt
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          input.name.trim(),
-          input.description ?? '',
-          resolved.pluginCode,
-          resolved.workflowCode,
-          resolved.styleId,
-          resolved.source,
-          resolved.enqueueSource,
-          Number(input.dailyLimit ?? 0),
-          Number(input.minIntervalMinutes ?? 30),
-          input.timeWindowStart ?? '09:00',
-          input.timeWindowEnd ?? '23:00',
-          Number(input.priority ?? 0),
-          input.enabled === false ? 0 : 1,
-          resolved.cadencePreset,
-          Number(input.weeklyLimit ?? 0),
-          Number(input.jitterMinutes ?? 0),
-          JSON.stringify(resolved.windows),
-          JSON.stringify(resolved.quietHours),
-          JSON.stringify(resolved.blackoutDates),
-          Number(input.sameStyleMinGapMinutes ?? 0),
-          resolved.onConflict,
-          JSON.stringify(resolved.sourceColumnIds),
-          timestamp,
-          timestamp,
-        );
-        return mapDispatchRuleProfile(firstRow(sqlite.prepare('SELECT * FROM dispatch_rule_profiles WHERE id = ?').get(result.lastInsertRowid)));
-      },
-      update(id: number, input: UpdateDispatchRuleProfileInput): DispatchRuleProfile {
-        const existing = this.findById(id);
-        if (!existing) {
-          throw new Error(`Dispatch rule ${id} not found.`);
-        }
-        const merged: CreateDispatchRuleProfileInput = {
-          name: input.name ?? existing.name,
-          description: input.description ?? existing.description,
-          pluginCode: input.pluginCode ?? existing.pluginCode,
-          workflowCode: input.workflowCode ?? existing.workflowCode,
-          styleId: input.styleId ?? existing.styleId,
-          source: input.source ?? existing.source,
-          enqueueSource: input.enqueueSource ?? existing.enqueueSource,
-          cadencePreset: input.cadencePreset ?? existing.cadencePreset,
-          windows: input.windows ?? existing.windows,
-          quietHours: input.quietHours ?? existing.quietHours,
-          blackoutDates: input.blackoutDates ?? existing.blackoutDates,
-          onConflict: input.onConflict ?? existing.onConflict,
-          sourceColumnIds: input.sourceColumnIds ?? existing.sourceColumnIds,
-          timeWindowStart: input.timeWindowStart ?? existing.timeWindowStart,
-          timeWindowEnd: input.timeWindowEnd ?? existing.timeWindowEnd,
-        };
-        const resolved = resolveRuleColumnsForWrite(merged);
-        sqlite.prepare(`
-          UPDATE dispatch_rule_profiles
-          SET name = ?, description = ?, pluginCode = ?, workflowCode = ?, styleId = ?,
-              source = ?, enqueueSource = ?, dailyLimit = ?, minIntervalMinutes = ?,
-              timeWindowStart = ?, timeWindowEnd = ?, priority = ?, enabled = ?,
-              cadencePreset = ?, weeklyLimit = ?, jitterMinutes = ?, windowsJson = ?,
-              quietHoursJson = ?, blackoutDatesJson = ?, sameStyleMinGapMinutes = ?,
-              onConflict = ?, sourceColumnIdsJson = ?, updatedAt = ?
-          WHERE id = ?
-        `).run(
-          merged.name,
-          merged.description ?? '',
-          resolved.pluginCode,
-          resolved.workflowCode,
-          resolved.styleId,
-          resolved.source,
-          resolved.enqueueSource,
-          Number(input.dailyLimit ?? existing.dailyLimit),
-          Number(input.minIntervalMinutes ?? existing.minIntervalMinutes),
-          merged.timeWindowStart ?? '09:00',
-          merged.timeWindowEnd ?? '23:00',
-          Number(input.priority ?? existing.priority),
-          input.enabled === undefined ? (existing.enabled ? 1 : 0) : (input.enabled ? 1 : 0),
-          resolved.cadencePreset,
-          Number(input.weeklyLimit ?? existing.weeklyLimit),
-          Number(input.jitterMinutes ?? existing.jitterMinutes),
-          JSON.stringify(resolved.windows),
-          JSON.stringify(resolved.quietHours),
-          JSON.stringify(resolved.blackoutDates),
-          Number(input.sameStyleMinGapMinutes ?? existing.sameStyleMinGapMinutes),
-          resolved.onConflict,
-          JSON.stringify(resolved.sourceColumnIds),
-          now(),
-          id,
-        );
-        return mapDispatchRuleProfile(firstRow(sqlite.prepare('SELECT * FROM dispatch_rule_profiles WHERE id = ?').get(id)));
-      },
-      delete(id: number): boolean {
-        sqlite.prepare('DELETE FROM dispatch_rule_profiles WHERE id = ?').run(id);
-        return !this.findById(id);
-      },
-      toggle(id: number, enabled: boolean): DispatchRuleProfile {
-        return this.update(id, { enabled });
       },
     },
     sourceColumns: {
@@ -2968,14 +1751,19 @@ export async function createDatabase(filename: string) {
           return this.assignSchedule(existing.id, { nowIso: options.nowIso });
         }
         const account = mapAccount(firstRow(sqlite.prepare('SELECT * FROM accounts WHERE id = ?').get(content.accountId)));
-        const assignment = resolveNextScheduledAt(content.id, content.accountId, source, options.nowIso);
+        const style = readContentStyle(content);
+        const workflowCode = getWorkflowCodeForContent(content, style);
+        
+        const schedulingEngine = new SchedulingEngine(db);
+        const scheduledAt = schedulingEngine.allocateScheduledTime(workflowCode);
+        
         const timestamp = now();
         const payload = {
           content: content.body,
           mediaPaths: content.mediaJson,
           topics: content.topicsJson,
           source,
-          dispatchPlan: buildDispatchPlan(assignment.policy, assignment.scheduledAt, `assigned from ${source}`),
+          dispatchPlan: buildDispatchPlan(workflowCode, scheduledAt, `assigned from ${source}`),
           trace: {
             tenantId: content.tenantId,
             pluginCode: content.pluginCode,
@@ -2986,29 +1774,34 @@ export async function createDatabase(filename: string) {
         const result = sqlite.prepare(`
           INSERT INTO distribution_tasks (contentId, accountId, platform, legacyPostId, scheduledAt, status, platformPayload, createdAt, updatedAt)
           VALUES (?, ?, ?, NULL, ?, 'queued', ?, ?, ?)
-        `).run(content.id, content.accountId, account.platform, assignment.scheduledAt, JSON.stringify(payload), timestamp, timestamp);
+        `).run(content.id, content.accountId, account.platform, scheduledAt, JSON.stringify(payload), timestamp, timestamp);
         return mapDistributionTask(firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE id = ?').get(result.lastInsertRowid)));
       },
       assignSchedule(id: number, options: { nowIso?: string } = {}): DistributionTask {
         const existing = mapDistributionTask(firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE id = ?').get(id)));
-        const source = typeof existing.platformPayload.source === 'string' ? existing.platformPayload.source : 'manual_reassign';
-        const assignment = resolveNextScheduledAt(existing.contentId, existing.accountId, source, options.nowIso, id);
+        const content = mapContentItem(firstRow(sqlite.prepare('SELECT * FROM content_items WHERE id = ?').get(existing.contentId)));
+        const style = readContentStyle(content);
+        const workflowCode = getWorkflowCodeForContent(content, style);
+
+        const schedulingEngine = new SchedulingEngine(db);
+        const scheduledAt = schedulingEngine.allocateScheduledTime(workflowCode);
+
         const nextPayload = {
           ...existing.platformPayload,
-          dispatchPlan: buildDispatchPlan(assignment.policy, assignment.scheduledAt, `reassigned from ${source}`),
+          dispatchPlan: buildDispatchPlan(workflowCode, scheduledAt, `reassigned`),
         };
         const timestamp = now();
         sqlite.prepare(`
           UPDATE distribution_tasks
           SET scheduledAt = ?, status = 'queued', platformPayload = ?, lastError = '', updatedAt = ?
           WHERE id = ?
-        `).run(assignment.scheduledAt, JSON.stringify(nextPayload), timestamp, id);
+        `).run(scheduledAt, JSON.stringify(nextPayload), timestamp, id);
         if (existing.legacyPostId) {
           sqlite.prepare(`
             UPDATE posts
             SET scheduledAt = ?, status = 'queued', lastError = '', updatedAt = ?
             WHERE id = ?
-          `).run(assignment.scheduledAt, timestamp, existing.legacyPostId);
+          `).run(scheduledAt, timestamp, existing.legacyPostId);
         }
         return mapDistributionTask(firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE id = ?').get(id)));
       },
@@ -3065,7 +1858,6 @@ export async function createDatabase(filename: string) {
         `).get(input.contentId, input.accountId);
         if (existingRow) {
           const existing = mapDistributionTask(existingRow as Record<string, unknown>);
-          assertNoScheduleConflict(input.contentId, input.accountId, input.scheduledAt, input.status, existing.id);
           sqlite.prepare(`
             UPDATE distribution_tasks
             SET platform = ?, legacyPostId = ?, scheduledAt = ?, status = ?, platformPayload = ?, lastError = '', updatedAt = ?
@@ -3082,7 +1874,6 @@ export async function createDatabase(filename: string) {
           return mapDistributionTask(firstRow(sqlite.prepare('SELECT * FROM distribution_tasks WHERE id = ?').get(existing.id)));
         }
 
-        assertNoScheduleConflict(input.contentId, input.accountId, input.scheduledAt, input.status);
         const result = sqlite.prepare(`
           INSERT INTO distribution_tasks (contentId, accountId, platform, legacyPostId, scheduledAt, status, platformPayload, createdAt, updatedAt)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -3123,7 +1914,6 @@ export async function createDatabase(filename: string) {
         const nextAccountId = input.accountId ?? existing.accountId;
         const account = mapAccount(firstRow(sqlite.prepare('SELECT * FROM accounts WHERE id = ?').get(nextAccountId)));
         firstRow(sqlite.prepare('SELECT id FROM content_items WHERE id = ?').get(nextContentId));
-        assertNoScheduleConflict(nextContentId, nextAccountId, input.scheduledAt, input.status, id);
 
         sqlite.prepare(`
           UPDATE distribution_tasks
@@ -3805,6 +2595,153 @@ export async function createDatabase(filename: string) {
       }
     }
   };
+
+  return db;
 }
 
-export type AppDatabase = Awaited<ReturnType<typeof createDatabase>>;
+export interface AppDatabase {
+  migrations: {
+    list(): string[];
+  };
+  settings: {
+    get(key: string): string | null;
+    set(key: string, value: string, description?: string): void;
+    list(): AppSetting[];
+  };
+  platforms: {
+    list(): Platform[];
+  };
+  accounts: {
+    create(input: CreateAccountInput): Account;
+    list(): Account[];
+    listByPlugin(pluginCode: string): Account[];
+    findById(id: number): Account | null;
+    update(id: number, input: UpdateAccountInput): Account;
+    updateHealth(id: number, input: { status: Account['status']; healthMessage: string; manualActionReason?: string }): Account;
+    delete(id: number): boolean;
+  };
+  posts: {
+    create(input: CreatePostInput): Post;
+    list(): Post[];
+    findById(id: number): Post | null;
+    listDue(nowIso: string): Post[];
+    updateStatus(id: number, status: Post['status'], lastError?: string, screenshotPath?: string): void;
+    delete(id: number): boolean;
+  };
+  contentStyles: {
+    listForAccount(accountId: number, pluginCode?: string): ContentStyle[];
+    findById(id: string): ContentStyle | null;
+    create(input: CreateContentStyleInput): ContentStyle;
+    update(id: string, input: UpdateContentStyleInput): ContentStyle;
+    copyToAccounts(sourceStyleId: string, targetAccountIds: number[], nameSuffix?: string): ContentStyle[];
+    delete(id: string): boolean;
+  };
+  sourceColumns: {
+    list(): SourceColumn[];
+    findById(id: string): SourceColumn | null;
+  };
+  contentItems: {
+    create(input: CreateContentItemInput): ContentItem;
+    list(): ContentItem[];
+    findById(id: number): ContentItem | null;
+    listVersions(contentId: number): ContentVersion[];
+    update(id: number, input: UpdateContentItemInput): ContentItem;
+    delete(id: number): boolean;
+  };
+  reviewItems: {
+    create(input: CreateReviewItemInput): ReviewItem;
+    listPending(): ReviewItem[];
+    approve(id: number, reviewerId: string, comment?: string): ReviewItem;
+    reject(id: number, reviewerId: string, comment?: string): ReviewItem;
+    requestRewrite(id: number, reviewerId: string, comment?: string): ReviewItem;
+    applyRewrite(id: number, reviewerId: string, comment: string, rewrittenBody: string): ReviewItem;
+    setRewriteError(id: number, message: string): ReviewItem;
+  };
+  distributionTasks: {
+    enqueueContent(contentId: number, source?: string): DistributionTask | null;
+    assignScheduleForContent(contentId: number, source?: string, options?: { nowIso?: string }): DistributionTask;
+    assignSchedule(id: number, options?: { nowIso?: string }): DistributionTask;
+    assignScheduleMany(ids: number[], options?: { nowIso?: string }): DistributionTask[];
+    ensureLegacyPost(taskId: number): Post;
+    create(input: CreateDistributionTaskInput): DistributionTask;
+    listDue(nowIso: string): DistributionTask[];
+    list(): DistributionTask[];
+    updateStatus(id: number, status: DistributionTask['status'], lastError?: string): void;
+    update(id: number, input: UpdateDistributionTaskInput): DistributionTask;
+    retry(id: number): DistributionTask;
+    retryMany(ids: number[]): DistributionTask[];
+    cancel(id: number): DistributionTask;
+    cancelMany(ids: number[]): DistributionTask[];
+    returnToReview(id: number, comment?: string): DistributionTask;
+    delete(id: number): boolean;
+    deleteMany(ids: number[]): number;
+  };
+  hotTopicsHistory: {
+    buildIdentityKey(item: any): string;
+    saveMany(items: any[]): void;
+    saveIncremental(items: any[]): number;
+    getLatest(limit?: number): any[];
+    getLastFetchTime(): string | null;
+    deleteAll(): number;
+  };
+  hotTopicAnalysis: {
+    listPending(limit?: number): any[];
+    markExtracted(hotTopicId: number, names: string[]): void;
+    markProcessed(hotTopicId: number, names: string[]): void;
+    markFailed(hotTopicId: number, message: string): void;
+    getQueueSummary(): any;
+    listFailed(limit?: number): any[];
+    resetAll(): number;
+    resetToday(): number;
+  };
+  hotPeople: {
+    upsert(input: UpsertHotPersonInput): HotPerson;
+    list(limit?: number): HotPerson[];
+    findByName(name: string): HotPerson | null;
+    deleteAll(): number;
+    deleteToday(): number;
+  };
+  hotBaziTasks: {
+    create(input: CreateHotBaziTaskInput): HotBaziTask;
+    list(): HotBaziTask[];
+    listByAccount(accountId: number): HotBaziTask[];
+    findById(id: number): HotBaziTask | null;
+    update(id: number, input: UpdateHotBaziTaskInput): HotBaziTask;
+    delete(id: number): boolean;
+    deleteMany(ids: number[]): number;
+    enqueueToDistribution(id: number): DistributionTask;
+    enqueueManyToDistribution(ids: number[]): DistributionTask[];
+  };
+  publicFigureEvidence: {
+    upsert(input: any): any;
+    findByName(name: string): any | null;
+  };
+  publishRuns: {
+    create(input: CreatePublishRunInput): PublishRun;
+    listByTask(taskId: number): PublishRun[];
+    list(): PublishRun[];
+  };
+  aiPlugins: {
+    upsert(input: any): AiPlugin;
+    list(): AiPlugin[];
+    findByCode(code: string): AiPlugin | null;
+  };
+  aiWorkflows: {
+    upsert(input: any): AiWorkflow;
+    list(): AiWorkflow[];
+    listByPlugin(pluginCode: string): AiWorkflow[];
+    findByCode(pluginCode: string, code: string): AiWorkflow | null;
+  };
+  aiWorkflowRuns: {
+    create(input: any): AiWorkflowRun;
+    updateStatus(runId: string, status: AiWorkflowRunStatus, contextSnapshot: Record<string, unknown>, logs: any[], finishedAt?: string): AiWorkflowRun;
+    findByRunId(runId: string): AiWorkflowRun | null;
+    listByWorkflow(pluginCode: string, workflowCode: string): AiWorkflowRun[];
+  };
+  publishingStrategies: {
+    upsert(input: CreatePublishingStrategyInput): PublishingStrategy;
+    findByWorkflow(workflowCode: string): PublishingStrategy | null;
+    list(): PublishingStrategy[];
+    delete(workflowCode: string): void;
+  };
+}

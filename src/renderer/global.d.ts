@@ -1,4 +1,4 @@
-import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AnalyzeHotPeopleInput, AnalyzeHotPeopleResult, AppSetting, ConnectionTestResult, ContentItem, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDispatchRuleProfileInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DispatchRuleProfile, DispatchSimulationEntry, DistributionTask, GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotBaziTask, HotPerson, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, SourceColumn, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDispatchRuleProfileInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput, PublishingStrategy, CreatePublishingStrategyInput, UpdatePublishingStrategyInput } from '../shared/types';
+import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AnalyzeHotPeopleInput, AnalyzeHotPeopleResult, AppSetting, ConnectionTestResult, ContentItem, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DispatchSimulationEntry, DistributionTask, GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotBaziTask, HotPerson, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, SourceColumn, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput, PublishingStrategy, CreatePublishingStrategyInput, UpdatePublishingStrategyInput } from '../shared/types';
 
 declare global {
   interface Window {
@@ -59,14 +59,6 @@ declare global {
         returnToReview?: (id: number, comment?: string) => Promise<DistributionTask>;
         assignSchedule?: (id: number) => Promise<DistributionTask>;
         assignScheduleMany?: (ids: number[]) => Promise<DistributionTask[]>;
-      };
-      dispatchRules?: {
-        list: () => Promise<DispatchRuleProfile[]>;
-        create: (input: CreateDispatchRuleProfileInput) => Promise<DispatchRuleProfile>;
-        update: (id: number, input: UpdateDispatchRuleProfileInput) => Promise<DispatchRuleProfile>;
-        delete: (id: number) => Promise<{ ok: boolean }>;
-        toggle: (id: number, enabled: boolean) => Promise<DispatchRuleProfile>;
-        simulate?: (id: number, horizonHours?: number) => Promise<DispatchSimulationEntry[]>;
       };
       sourceColumns?: {
         list: () => Promise<SourceColumn[]>;

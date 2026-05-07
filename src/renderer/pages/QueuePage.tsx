@@ -497,10 +497,18 @@ export function QueuePage() {
 
           <button 
             onClick={() => { resetForm(); setShowForm(true); }}
-            className="tw-flex tw-items-center tw-gap-2 tw-px-8 tw-py-4 tw-bg-slate-900 tw-text-white tw-rounded-[24px] tw-text-sm tw-font-black tw-shadow-2xl tw-shadow-slate-200 hover:tw-bg-brand-600 tw-transition-all active:tw-scale-95"
+            className="tw-flex tw-items-center tw-gap-2 tw-px-6 tw-py-4 tw-bg-slate-900 tw-text-white tw-rounded-[24px] tw-text-sm tw-font-black tw-shadow-2xl tw-shadow-slate-200 hover:tw-bg-brand-600 tw-transition-all active:tw-scale-95"
           >
             <Plus size={18} />
             部署新任务
+          </button>
+
+          <button 
+            onClick={() => setShowDispatchManager(true)}
+            className="tw-flex tw-items-center tw-justify-center tw-w-14 tw-h-14 tw-bg-white tw-border tw-border-slate-100 tw-text-slate-500 tw-rounded-[24px] tw-shadow-sm hover:tw-bg-slate-50 tw-transition-all active:tw-scale-95"
+            title="全局调度策略"
+          >
+            <Settings size={20} />
           </button>
         </div>
       </div>
@@ -846,14 +854,14 @@ export function QueuePage() {
           <table className="tw-w-full tw-text-left tw-min-w-[1000px]">
             <thead>
               <tr className="tw-bg-slate-50/50 tw-border-b tw-border-slate-50">
-                <th className="tw-px-4 tw-py-5 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-w-12">
+                <th className="tw-px-4 tw-py-3 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-w-12">
                   <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisibleTasks} />
                 </th>
-                <th className="tw-px-8 tw-py-5 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-w-48">任务主体</th>
-                <th className="tw-px-8 tw-py-5 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest">内容摘要</th>
-                <th className="tw-px-8 tw-py-5 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-w-40">执行时间</th>
-                <th className="tw-px-8 tw-py-5 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-w-32">当前状态</th>
-                <th className="tw-px-8 tw-py-5 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-text-right tw-w-64">交互操作</th>
+                <th className="tw-px-4 tw-py-3 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-w-36">任务主体</th>
+                <th className="tw-px-4 tw-py-3 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest">内容摘要</th>
+                <th className="tw-px-4 tw-py-3 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-w-36">执行时间</th>
+                <th className="tw-px-4 tw-py-3 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-w-28">当前状态</th>
+                <th className="tw-px-4 tw-py-3 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-text-right tw-w-56">交互操作</th>
               </tr>
             </thead>
             <tbody className="tw-divide-y tw-divide-slate-50">
@@ -868,23 +876,23 @@ export function QueuePage() {
                 return (
                   <Fragment key={task.id}>
                     <tr className="hover:tw-bg-slate-50/40 tw-transition-colors group">
-                      <td className="tw-px-4 tw-py-6 tw-align-top">
+                      <td className="tw-px-4 tw-py-3 tw-align-top">
                         <input type="checkbox" checked={selectedTaskIds.includes(task.id)} onChange={() => toggleTaskSelection(task.id)} />
                       </td>
-                      <td className="tw-px-8 tw-py-6 tw-whitespace-nowrap">
+                      <td className="tw-px-4 tw-py-3 tw-whitespace-nowrap">
                         <div className="tw-flex tw-items-center tw-gap-3">
-                          <div className="tw-w-10 tw-h-10 tw-bg-slate-50 tw-text-slate-400 tw-rounded-xl tw-flex tw-items-center tw-justify-center group-hover:tw-bg-brand-50 group-hover:tw-text-brand-500 tw-transition-all">
-                            <Users size={18} />
+                          <div className="tw-w-8 tw-h-8 tw-bg-slate-50 tw-text-slate-400 tw-rounded-xl tw-flex tw-items-center tw-justify-center group-hover:tw-bg-brand-50 group-hover:tw-text-brand-500 tw-transition-all">
+                            <Users size={16} />
                           </div>
                           <div>
-                            <p className="tw-text-sm tw-font-bold tw-text-slate-900">{account?.name || '未知账号'}</p>
-                            <span className="tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase">{task.platform}</span>
+                            <p className="tw-text-xs tw-font-bold tw-text-slate-900">{account?.name || '未知账号'}</p>
+                            <span className="tw-text-[9px] tw-font-bold tw-text-slate-400 tw-uppercase">{task.platform}</span>
                           </div>
                         </div>
                       </td>
-                      <td className="tw-px-8 tw-py-6">
+                      <td className="tw-px-4 tw-py-3">
                         <div className="tw-max-w-xs xl:tw-max-w-md">
-                          <p className="tw-text-[13px] tw-text-slate-600 tw-truncate tw-font-medium" 
+                          <p className="tw-text-xs tw-text-slate-600 tw-truncate tw-font-medium" 
                              title={htmlToPlainPreview(taskContentHtml)}>
                             {htmlToPlainPreview(taskContentHtml)}
                           </p>
@@ -897,8 +905,8 @@ export function QueuePage() {
                           )}
                         </div>
                       </td>
-                      <td className="tw-px-8 tw-py-6 tw-whitespace-nowrap">
-                        <div className="tw-flex tw-items-center tw-gap-3">
+                      <td className="tw-px-4 tw-py-3 tw-whitespace-nowrap">
+                        <div className="tw-flex tw-items-center tw-gap-2">
                           <div className={`tw-p-2 tw-rounded-lg ${
                             new Date(task.scheduledAt) > new Date() 
                             ? 'tw-bg-brand-50 tw-text-brand-600' 
@@ -930,18 +938,18 @@ export function QueuePage() {
                           </div>
                         </div>
                       </td>
-                      <td className="tw-px-8 tw-py-6 tw-whitespace-nowrap">
+                      <td className="tw-px-4 tw-py-3 tw-whitespace-nowrap">
                         {getStatusBadge(task.status)}
                       </td>
-                      <td className="tw-px-8 tw-py-6 tw-whitespace-nowrap">
+                      <td className="tw-px-4 tw-py-3 tw-whitespace-nowrap">
                         <div className="tw-flex tw-items-center tw-justify-end tw-gap-2">
                           {task.status !== 'published' && (
                             <button 
                               onClick={() => publishTaskNow(task)}
                               disabled={busyTaskId === task.id}
-                              className="tw-flex tw-items-center tw-gap-2 tw-px-5 tw-py-2 tw-bg-slate-900 tw-text-white tw-rounded-xl tw-text-[12px] tw-font-bold tw-shadow-sm hover:tw-bg-brand-600 tw-transition-all active:tw-scale-95 disabled:tw-opacity-50"
+                              className="tw-flex tw-items-center tw-gap-2 tw-px-3 tw-py-1.5 tw-bg-slate-900 tw-text-white tw-rounded-xl tw-text-[11px] tw-font-bold tw-shadow-sm hover:tw-bg-brand-600 tw-transition-all active:tw-scale-95 disabled:tw-opacity-50"
                             >
-                              <Play size={14} />
+                              <Play size={12} />
                               手动执行
                             </button>
                           )}
@@ -956,26 +964,26 @@ export function QueuePage() {
                                   setTaskRuns(prev => ({ ...prev, [task.id]: runs.slice(0, 5) || [] }));
                                 }
                               }}
-                              className={`tw-p-2 tw-rounded-xl tw-transition-all ${isExpanded ? 'tw-bg-slate-900 tw-text-white tw-shadow-lg' : 'tw-text-slate-300 hover:tw-text-slate-900 hover:tw-bg-slate-50'}`}
+                              className={`tw-p-1.5 tw-rounded-xl tw-transition-all ${isExpanded ? 'tw-bg-slate-900 tw-text-white tw-shadow-lg' : 'tw-text-slate-300 hover:tw-text-slate-900 hover:tw-bg-slate-50'}`}
                               title="日志"
                             >
-                              <History size={18} />
+                              <History size={16} />
                             </button>
-                            <button onClick={() => editTask(task)} className="tw-p-2 tw-text-slate-300 hover:tw-text-blue-600 hover:tw-bg-slate-50 tw-rounded-xl tw-transition-all" title="编辑">
-                              <Settings size={18} />
+                            <button onClick={() => editTask(task)} className="tw-p-1.5 tw-text-slate-300 hover:tw-text-blue-600 hover:tw-bg-slate-50 tw-rounded-xl tw-transition-all" title="编辑">
+                              <Settings size={16} />
                             </button>
                             {task.status !== 'published' && (
                               <button
                                 onClick={() => void returnTaskToReview(task)}
                                 disabled={busyTaskId === task.id}
-                                className="tw-p-2 tw-text-slate-300 hover:tw-text-amber-600 hover:tw-bg-amber-50 tw-rounded-xl tw-transition-all disabled:tw-opacity-50"
+                                className="tw-p-1.5 tw-text-slate-300 hover:tw-text-amber-600 hover:tw-bg-amber-50 tw-rounded-xl tw-transition-all disabled:tw-opacity-50"
                                 title="退回审核"
                               >
-                                <ClipboardCheck size={18} />
+                                <ClipboardCheck size={16} />
                               </button>
                             )}
-                            <button onClick={() => void deleteTask(task.id)} className="tw-p-2 tw-text-slate-300 hover:tw-text-red-500 hover:tw-bg-red-50 tw-rounded-xl tw-transition-all" title="删除">
-                              <Trash2 size={18} />
+                            <button onClick={() => void deleteTask(task.id)} className="tw-p-1.5 tw-text-slate-300 hover:tw-text-red-500 hover:tw-bg-red-50 tw-rounded-xl tw-transition-all" title="删除">
+                              <Trash2 size={16} />
                             </button>
                           </div>
                         </div>
@@ -983,7 +991,7 @@ export function QueuePage() {
                     </tr>
                     {isExpanded && (
                       <tr className="tw-bg-slate-50/20">
-                        <td colSpan={6} className="tw-px-8 tw-py-6">
+                        <td colSpan={6} className="tw-px-6 tw-py-4">
                           <div className="tw-bg-white tw-rounded-2xl tw-p-6 tw-border tw-border-slate-100 tw-shadow-sm tw-animate-fade-in">
                             <div className="tw-flex tw-items-center tw-justify-between tw-mb-4">
                               <h4 className="tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest">任务执行链路追踪</h4>

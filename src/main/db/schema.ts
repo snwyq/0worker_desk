@@ -342,36 +342,6 @@ CREATE TABLE IF NOT EXISTS hot_bazi_tasks (
 CREATE INDEX IF NOT EXISTS idx_hot_bazi_tasks_scheduled ON hot_bazi_tasks(scheduledAt, status);
 CREATE INDEX IF NOT EXISTS idx_hot_bazi_tasks_account_status ON hot_bazi_tasks(accountId, status);
 
-CREATE TABLE IF NOT EXISTS dispatch_rule_profiles (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  pluginCode TEXT NOT NULL DEFAULT '',
-  workflowCode TEXT NOT NULL DEFAULT '',
-  styleId TEXT NOT NULL DEFAULT '',
-  source TEXT NOT NULL DEFAULT '',
-  enqueueSource TEXT NOT NULL DEFAULT '',
-  dailyLimit INTEGER NOT NULL DEFAULT 0,
-  minIntervalMinutes INTEGER NOT NULL DEFAULT 30,
-  timeWindowStart TEXT NOT NULL DEFAULT '09:00',
-  timeWindowEnd TEXT NOT NULL DEFAULT '23:00',
-  priority INTEGER NOT NULL DEFAULT 0,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  cadencePreset TEXT NOT NULL DEFAULT 'custom',
-  weeklyLimit INTEGER NOT NULL DEFAULT 0,
-  jitterMinutes INTEGER NOT NULL DEFAULT 0,
-  windowsJson TEXT NOT NULL DEFAULT '[]',
-  quietHoursJson TEXT NOT NULL DEFAULT '[]',
-  blackoutDatesJson TEXT NOT NULL DEFAULT '[]',
-  sameStyleMinGapMinutes INTEGER NOT NULL DEFAULT 0,
-  onConflict TEXT NOT NULL DEFAULT 'defer',
-  sourceColumnIdsJson TEXT NOT NULL DEFAULT '[]',
-  createdAt TEXT NOT NULL,
-  updatedAt TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_dispatch_rule_profiles_enabled_priority ON dispatch_rule_profiles(enabled, priority);
-
 CREATE TABLE IF NOT EXISTS source_columns (
   id TEXT PRIMARY KEY,
   label TEXT NOT NULL,

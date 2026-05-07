@@ -50,8 +50,6 @@ export function AccountsPage() {
   const [persona, setPersona] = useState('');
   const [forbiddenWords, setForbiddenWords] = useState('');
   const [defaultReviewMode, setDefaultReviewMode] = useState('manual');
-  const [dailyLimit, setDailyLimit] = useState('3');
-  const [minIntervalMinutes, setMinIntervalMinutes] = useState('45');
   const [autoPublish, setAutoPublish] = useState(false);
 
   const [error, setError] = useState('');
@@ -109,8 +107,6 @@ export function AccountsPage() {
         forbiddenWords: forbiddenWords.split(',').map((word) => word.trim()).filter(Boolean),
         defaultReviewMode,
         dispatchPolicy: {
-          dailyLimit: Number(dailyLimit) || 0,
-          minIntervalMinutes: Number(minIntervalMinutes) || 0,
           autoPublish,
         },
       },
@@ -144,8 +140,6 @@ export function AccountsPage() {
     setPersona('');
     setForbiddenWords('');
     setDefaultReviewMode('manual');
-    setDailyLimit('3');
-    setMinIntervalMinutes('45');
     setAutoPublish(false);
   }
 
@@ -164,8 +158,6 @@ export function AccountsPage() {
     setForbiddenWords(getStringArray(account.aiConfigJson.forbiddenWords).join(','));
     setDefaultReviewMode(typeof account.aiConfigJson.defaultReviewMode === 'string' ? account.aiConfigJson.defaultReviewMode : 'manual');
     const dispatchPolicy = getDispatchPolicy(account.aiConfigJson);
-    setDailyLimit(typeof dispatchPolicy.dailyLimit === 'number' ? String(dispatchPolicy.dailyLimit) : '3');
-    setMinIntervalMinutes(typeof dispatchPolicy.minIntervalMinutes === 'number' ? String(dispatchPolicy.minIntervalMinutes) : '45');
     setAutoPublish(dispatchPolicy.autoPublish === true);
     setShowForm(true);
   }
@@ -390,14 +382,6 @@ export function AccountsPage() {
                   <label className="tw-space-y-2 md:tw-col-span-2">
                     <span className="tw-text-[10px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest">禁用表达</span>
                     <input className="tw-w-full tw-bg-transparent tw-border-b tw-border-slate-100 tw-py-2 tw-text-sm tw-font-bold focus:tw-border-brand-500 tw-outline-none" value={forbiddenWords} onChange={(event) => setForbiddenWords(event.target.value)} placeholder="用英文逗号分隔，例如：绝对,稳赚,必然" />
-                  </label>
-                  <label className="tw-space-y-2">
-                    <span className="tw-text-[10px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest">每日发布上限</span>
-                    <input type="number" min="0" className="tw-w-full tw-bg-transparent tw-border-b tw-border-slate-100 tw-py-2 tw-text-sm tw-font-bold focus:tw-border-brand-500 tw-outline-none" value={dailyLimit} onChange={(event) => setDailyLimit(event.target.value)} />
-                  </label>
-                  <label className="tw-space-y-2">
-                    <span className="tw-text-[10px] tw-font-black tw-text-slate-400 tw-uppercase tw-tracking-widest">最小间隔（分钟）</span>
-                    <input type="number" min="0" className="tw-w-full tw-bg-transparent tw-border-b tw-border-slate-100 tw-py-2 tw-text-sm tw-font-bold focus:tw-border-brand-500 tw-outline-none" value={minIntervalMinutes} onChange={(event) => setMinIntervalMinutes(event.target.value)} />
                   </label>
                   <label className="tw-md:col-span-2 tw-flex tw-items-center tw-justify-between tw-gap-4 tw-bg-slate-50 tw-border tw-border-slate-100 tw-rounded-2xl tw-px-5 tw-py-4 md:tw-col-span-2">
                     <span>

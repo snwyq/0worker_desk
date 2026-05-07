@@ -1,6 +1,6 @@
 import electron from 'electron';
 import http from 'node:http';
-import type { AnalyzeHotPeopleInput, ConnectionTestResult, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDispatchRuleProfileInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreatePublishingStrategyInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, GenerateHotBaziBatchInput, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDispatchRuleProfileInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput } from '../../shared/types.js';
+import type { AnalyzeHotPeopleInput, ConnectionTestResult, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreatePublishingStrategyInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, GenerateHotBaziBatchInput, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput } from '../../shared/types.js';
 import { fetchAdsPowerProfiles } from '../browser/AdsPowerApi.js';
 import { createConnectorForAccount } from '../browser/BrowserConnectorFactory.js';
 import type { AppDatabase } from '../db/database.js';
@@ -243,7 +243,7 @@ async function syncAdsPowerAccounts(repositories: AppDatabase) {
 
   let syncCount = 0;
   for (const profile of profiles) {
-    const existing = existingAccounts.find(a => a.providerProfileId === profile.user_id && a.browserMode === 'adspower');
+    const existing = existingAccounts.find((a: any) => a.providerProfileId === profile.user_id && a.browserMode === 'adspower');
 
     if (!existing) {
       repositories.accounts.create({
@@ -275,7 +275,7 @@ async function syncAdsPowerAccounts(repositories: AppDatabase) {
 }
 
 function findDistributionTaskForPost(repositories: AppDatabase, postId: number) {
-  return repositories.distributionTasks.list().find((task) => task.legacyPostId === postId) ?? null;
+  return repositories.distributionTasks.list().find((task: any) => task.legacyPostId === postId) ?? null;
 }
 
 function recordRunForPost(
@@ -363,11 +363,6 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   ));
   ipcMain.handle('distributionTasks:assignSchedule', (_event, id: number) => repositories.distributionTasks.assignSchedule(id));
   ipcMain.handle('distributionTasks:assignScheduleMany', (_event, ids: number[]) => repositories.distributionTasks.assignScheduleMany(ids));
-  ipcMain.handle('dispatchRules:list', () => repositories.dispatchRules.list());
-  ipcMain.handle('dispatchRules:create', (_event, input: CreateDispatchRuleProfileInput) => repositories.dispatchRules.create(input));
-  ipcMain.handle('dispatchRules:update', (_event, id: number, input: UpdateDispatchRuleProfileInput) => repositories.dispatchRules.update(id, input));
-  ipcMain.handle('dispatchRules:delete', (_event, id: number) => ({ ok: repositories.dispatchRules.delete(id) }));
-  ipcMain.handle('dispatchRules:toggle', (_event, id: number, enabled: boolean) => repositories.dispatchRules.toggle(id, enabled));
   ipcMain.handle('sourceColumns:list', () => repositories.sourceColumns.list());
   ipcMain.handle('hotBaziTasks:list', () => repositories.hotBaziTasks.list());
   ipcMain.handle('hotBaziTasks:create', (_event, input: CreateHotBaziTaskInput) => repositories.hotBaziTasks.create(input));
@@ -731,35 +726,6 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
         return;
       }
 
-      if (request.method === 'GET' && request.url === '/dispatch-rules') {
-        sendJson(request, response, 200, repositories.dispatchRules.list());
-        return;
-      }
-
-      if (request.method === 'POST' && request.url === '/dispatch-rules') {
-        const input = await readBody(request) as CreateDispatchRuleProfileInput;
-        sendJson(request, response, 200, repositories.dispatchRules.create(input));
-        return;
-      }
-
-      const dispatchRuleMatch = request.url?.match(/^\/dispatch-rules\/(\d+)$/);
-      if (request.method === 'PATCH' && dispatchRuleMatch) {
-        const input = await readBody(request) as UpdateDispatchRuleProfileInput;
-        sendJson(request, response, 200, repositories.dispatchRules.update(Number(dispatchRuleMatch[1]), input));
-        return;
-      }
-
-      if (request.method === 'DELETE' && dispatchRuleMatch) {
-        sendJson(request, response, 200, { ok: repositories.dispatchRules.delete(Number(dispatchRuleMatch[1])) });
-        return;
-      }
-
-      const dispatchRuleToggleMatch = request.url?.match(/^\/dispatch-rules\/(\d+)\/toggle$/);
-      if (request.method === 'POST' && dispatchRuleToggleMatch) {
-        const input = await readBody(request) as { enabled?: boolean };
-        sendJson(request, response, 200, repositories.dispatchRules.toggle(Number(dispatchRuleToggleMatch[1]), input.enabled === true));
-        return;
-      }
 
       if (request.method === 'GET' && request.url === '/source-columns') {
         sendJson(request, response, 200, repositories.sourceColumns.list());

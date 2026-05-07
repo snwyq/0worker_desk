@@ -64,7 +64,7 @@ export class PublishScheduler {
   }
 
   async publishTaskNow(taskId: number) {
-    const task = this.repositories.distributionTasks.list().find((item) => item.id === taskId);
+    const task = this.repositories.distributionTasks.list().find((item: any) => item.id === taskId);
     if (!task) {
       return { ok: false, message: `Distribution task ${taskId} was not found`, status: 'failed' as const };
     }

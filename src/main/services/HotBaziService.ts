@@ -78,7 +78,7 @@ export class HotBaziService {
       throw new Error(`Account ${input.accountId} was not found`);
     }
 
-    const people = this.db.hotPeople.list(input.limit ?? 20).filter((item) => item.analysisStatus === 'completed');
+    const people = this.db.hotPeople.list(input.limit ?? 20).filter((item: any) => item.analysisStatus === 'completed');
     if (people.length === 0) {
       return {
         createdContents: 0,

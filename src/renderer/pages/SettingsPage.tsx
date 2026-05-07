@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CalendarClock, CheckCircle2, Database, Globe, Languages, RefreshCcw, Save, Settings, Sparkles, Terminal, Trash2, Plus } from 'lucide-react';
 
-import type { AppSetting, BrowserMode, DispatchRuleProfile, UpdateCheckResult, UpdateConfig, AiWorkflow, PublishingStrategy } from '../../shared/types';
+import type { AppSetting, BrowserMode, UpdateCheckResult, UpdateConfig, AiWorkflow, PublishingStrategy } from '../../shared/types';
 import { appApi } from '../api';
 import { PublishingStrategyCard } from '../components/PublishingStrategyCard';
 import { SchedulingSandbox } from '../components/SchedulingSandbox';
@@ -44,7 +44,6 @@ function isSecretSetting(key: string) {
 export function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'general' | 'integration' | 'content'>('general');
   const [settings, setSettings] = useState<AppSetting[]>([]);
-  const [dispatchRules, setDispatchRules] = useState<DispatchRuleProfile[]>([]);
   const [workflows, setWorkflows] = useState<AiWorkflow[]>([]);
   const [selectedWorkflowCode, setSelectedWorkflowCode] = useState<string>('');
   const [strategy, setStrategy] = useState<PublishingStrategy | null>(null);
@@ -60,28 +59,13 @@ export function SettingsPage() {
   const [editingWorkflow, setEditingWorkflow] = useState<AiWorkflow | null>(null);
   const [workflowDraft, setWorkflowDraft] = useState({ name: '', code: '' });
 
-  const [ruleDraft, setRuleDraft] = useState({
-    name: '',
-    description: '',
-    pluginCode: '',
-    workflowCode: '',
-    styleId: '',
-    source: '',
-    enqueueSource: '',
-    dailyLimit: '5',
-    minIntervalMinutes: '60',
-    timeWindowStart: '09:00',
-    timeWindowEnd: '23:00',
-    priority: '50',
-  });
 
   async function refresh() {
     setLoading(true);
     try {
-      const [nextSettings, nextUpdateStatus, nextDispatchRules, plugins] = await Promise.all([
+      const [nextSettings, nextUpdateStatus, plugins] = await Promise.all([
         appApi.settings.list(),
         appApi.updates.status(),
-        appApi.dispatchRules.list(),
         appApi.ai.listPlugins()
       ]);
 
@@ -94,7 +78,6 @@ export function SettingsPage() {
       
       setSettings(nextSettings);
       setUpdateConfig(nextUpdateStatus.config);
-      setDispatchRules(nextDispatchRules);
       setWorkflows(allWorkflows);
       setDraftValues(Object.fromEntries(nextSettings.map((setting) => [setting.key, setting.value])));
       
@@ -192,52 +175,7 @@ export function SettingsPage() {
     setDraftValues((prev) => ({ ...prev, [key]: value }));
   }
 
-  function updateRuleDraft(key: keyof typeof ruleDraft, value: string) {
-    setRuleDraft((prev) => ({ ...prev, [key]: value }));
-  }
 
-  async function saveRule() {
-    setError('');
-    try {
-      await appApi.dispatchRules.create({
-        ...ruleDraft,
-        dailyLimit: Number(ruleDraft.dailyLimit) || 0,
-        minIntervalMinutes: Number(ruleDraft.minIntervalMinutes) || 0,
-        priority: Number(ruleDraft.priority) || 0,
-        enabled: true,
-      });
-      setRuleDraft({
-        name: '',
-        description: '',
-        pluginCode: '',
-        workflowCode: '',
-        styleId: '',
-        source: '',
-        enqueueSource: '',
-        dailyLimit: '5',
-        minIntervalMinutes: '60',
-        timeWindowStart: '09:00',
-        timeWindowEnd: '23:00',
-        priority: '50',
-      });
-      setSuccess('调度规则已保存。');
-      setTimeout(() => setSuccess(''), 2000);
-      await refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }
-
-  async function toggleRule(rule: DispatchRuleProfile) {
-    await appApi.dispatchRules.toggle(rule.id, !rule.enabled);
-    await refresh();
-  }
-
-  async function deleteRule(rule: DispatchRuleProfile) {
-    if (!window.confirm(`确认删除调度规则“${rule.name}”？`)) return;
-    await appApi.dispatchRules.delete(rule.id);
-    await refresh();
-  }
 
   async function handleSaveWorkflow() {
     if (!workflowDraft.name || !workflowDraft.code) {
@@ -627,57 +565,6 @@ export function SettingsPage() {
               </div>
             </div>
 
-            {/* 自动调度规则 */}
-            <section className="tw-bg-white tw-rounded-[32px] tw-border tw-border-slate-100 tw-p-8 tw-shadow-sm">
-              <div className="tw-flex tw-items-center tw-gap-4 tw-mb-10">
-                <div className="tw-p-3 tw-bg-blue-50 tw-text-blue-600 tw-rounded-2xl">
-                  <Database size={24} />
-                </div>
-                <div>
-                  <h2 className="tw-text-lg tw-font-bold tw-text-slate-900">自动调度规则库</h2>
-                  <p className="tw-text-xs tw-text-slate-400">精细化控制特定标签或来源内容的发布节奏。</p>
-                </div>
-              </div>
-
-              {/* 规则表单与表格 (保持原有逻辑) */}
-              <div className="tw-grid tw-grid-cols-1 lg:tw-grid-cols-4 tw-gap-4 tw-mb-10">
-                 <input className="tw-bg-slate-50 tw-border tw-border-slate-100 tw-px-4 tw-py-3 tw-rounded-xl tw-text-sm" placeholder="规则名称" value={ruleDraft.name} onChange={(e) => updateRuleDraft('name', e.target.value)} />
-                 <input className="tw-bg-slate-50 tw-border tw-border-slate-100 tw-px-4 tw-py-3 tw-rounded-xl tw-text-sm" placeholder="工作流 ID" value={ruleDraft.workflowCode} onChange={(e) => updateRuleDraft('workflowCode', e.target.value)} />
-                 <input className="tw-bg-slate-50 tw-border tw-border-slate-100 tw-px-4 tw-py-3 tw-rounded-xl tw-text-sm" placeholder="每天上限" type="number" value={ruleDraft.dailyLimit} onChange={(e) => updateRuleDraft('dailyLimit', e.target.value)} />
-                 <button onClick={() => void saveRule()} className="tw-bg-slate-900 tw-text-white tw-rounded-xl tw-font-bold tw-text-sm">保存规则</button>
-              </div>
-
-              <div className="tw-overflow-x-auto">
-                <table className="tw-w-full tw-text-left">
-                  <thead>
-                    <tr className="tw-border-b tw-border-slate-100">
-                      <th className="tw-py-4 tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase">规则名称</th>
-                      <th className="tw-py-4 tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase">受控范围</th>
-                      <th className="tw-py-4 tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase">配额与频率</th>
-                      <th className="tw-py-4 tw-text-right tw-text-[11px] tw-font-black tw-text-slate-400 tw-uppercase">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody className="tw-divide-y tw-divide-slate-50">
-                    {dispatchRules.map((rule) => (
-                      <tr key={rule.id}>
-                        <td className="tw-py-5">
-                          <p className="tw-text-sm tw-font-black tw-text-slate-900">{rule.name}</p>
-                        </td>
-                        <td className="tw-py-5 tw-text-xs tw-text-slate-500">
-                          {rule.workflowCode || '全部工作流'}
-                        </td>
-                        <td className="tw-py-5 tw-text-xs tw-font-bold tw-text-slate-600">
-                          {rule.dailyLimit} 条 / 日，间隔 {rule.minIntervalMinutes} 分钟
-                        </td>
-                        <td className="tw-py-5 tw-text-right">
-                           <button onClick={() => deleteRule(rule)} className="tw-p-2 tw-text-slate-300 hover:tw-text-red-500"><Trash2 size={16} /></button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
           </div>
         )}
       </div>

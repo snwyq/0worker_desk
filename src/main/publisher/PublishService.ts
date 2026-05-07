@@ -75,7 +75,7 @@ export async function publishPostNow(repositories: AppDatabase, postId: number, 
 }
 
 function recordRun(repositories: AppDatabase, postId: number, status: NonNullable<PublishNowResult['status']>, message: string, startedAt: string) {
-  const task = repositories.distributionTasks.list().find((item) => item.legacyPostId === postId);
+  const task = repositories.distributionTasks.list().find((item: any) => item.legacyPostId === postId);
   if (!task) {
     return;
   }

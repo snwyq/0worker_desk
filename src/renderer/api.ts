@@ -1,4 +1,4 @@
-import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AiWorkflowRun, AnalyzeHotPeopleInput, AnalyzeHotPeopleResult, AppSetting, ConnectionTestResult, ContentItem, ContentVersion, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDispatchRuleProfileInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DispatchRuleProfile, DispatchSimulationEntry, DistributionTask, GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotBaziTask, HotPerson, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, SourceColumn, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDispatchRuleProfileInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput, PublishingStrategy, CreatePublishingStrategyInput, UpdatePublishingStrategyInput } from '../shared/types';
+import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AiWorkflowRun, AnalyzeHotPeopleInput, AnalyzeHotPeopleResult, AppSetting, ConnectionTestResult, ContentItem, ContentVersion, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DispatchSimulationEntry, DistributionTask, GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotBaziTask, HotPerson, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, SourceColumn, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput, PublishingStrategy, CreatePublishingStrategyInput, UpdatePublishingStrategyInput } from '../shared/types';
 
 
 const httpBaseUrl = 'http://127.0.0.1:5183';
@@ -327,56 +327,6 @@ export const appApi = {
       return httpJson<DistributionTask[]>(`/distribution-tasks/assign-schedule-many`, {
         method: 'POST',
         body: JSON.stringify({ ids }),
-      });
-    },
-  },
-  dispatchRules: {
-    list: (): Promise<DispatchRuleProfile[]> => {
-      if (window.weiboPublisher?.dispatchRules) {
-        return window.weiboPublisher.dispatchRules.list();
-      }
-      return httpJson<DispatchRuleProfile[]>('/dispatch-rules');
-    },
-    create: (input: CreateDispatchRuleProfileInput): Promise<DispatchRuleProfile> => {
-      if (window.weiboPublisher?.dispatchRules) {
-        return window.weiboPublisher.dispatchRules.create(input);
-      }
-      return httpJson<DispatchRuleProfile>('/dispatch-rules', {
-        method: 'POST',
-        body: JSON.stringify(input),
-      });
-    },
-    update: (id: number, input: UpdateDispatchRuleProfileInput): Promise<DispatchRuleProfile> => {
-      if (window.weiboPublisher?.dispatchRules) {
-        return window.weiboPublisher.dispatchRules.update(id, input);
-      }
-      return httpJson<DispatchRuleProfile>(`/dispatch-rules/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(input),
-      });
-    },
-    delete: (id: number): Promise<{ ok: boolean }> => {
-      if (window.weiboPublisher?.dispatchRules) {
-        return window.weiboPublisher.dispatchRules.delete(id);
-      }
-      return httpJson<{ ok: boolean }>(`/dispatch-rules/${id}`, { method: 'DELETE' });
-    },
-    toggle: (id: number, enabled: boolean): Promise<DispatchRuleProfile> => {
-      if (window.weiboPublisher?.dispatchRules) {
-        return window.weiboPublisher.dispatchRules.toggle(id, enabled);
-      }
-      return httpJson<DispatchRuleProfile>(`/dispatch-rules/${id}/toggle`, {
-        method: 'POST',
-        body: JSON.stringify({ enabled }),
-      });
-    },
-    simulate: (id: number, horizonHours = 48): Promise<DispatchSimulationEntry[]> => {
-      if (window.weiboPublisher?.dispatchRules?.simulate) {
-        return window.weiboPublisher.dispatchRules.simulate(id, horizonHours);
-      }
-      return httpJson<DispatchSimulationEntry[]>(`/dispatch-rules/${id}/simulate`, {
-        method: 'POST',
-        body: JSON.stringify({ horizonHours }),
       });
     },
   },

@@ -324,52 +324,6 @@ export interface DistributionTask {
   updatedAt: string;
 }
 
-export interface DispatchRuleProfile {
-  id: number;
-  name: string;
-  description: string;
-  pluginCode: string;
-  workflowCode: string;
-  styleId: string;
-  source: string;
-  enqueueSource: string;
-  dailyLimit: number;
-  minIntervalMinutes: number;
-  timeWindowStart: string;
-  timeWindowEnd: string;
-  priority: number;
-  enabled: boolean;
-  cadencePreset: DispatchCadencePreset;
-  weeklyLimit: number;
-  jitterMinutes: number;
-  windows: DispatchWindow[];
-  quietHours: DispatchQuietHour[];
-  blackoutDates: string[];
-  sameStyleMinGapMinutes: number;
-  onConflict: DispatchConflictStrategy;
-  sourceColumnIds: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type DispatchCadencePreset = 'low' | 'normal' | 'high' | 'intensive' | 'custom';
-
-export type DispatchConflictStrategy = 'defer' | 'preempt' | 'drop' | 'returnToReview';
-
-export interface DispatchWindow {
-  label: string;
-  weekdays: number[]; // ISO 1-7 (Mon=1..Sun=7)
-  start: string; // "HH:MM"
-  end: string;   // "HH:MM"
-  weight: number;
-}
-
-export interface DispatchQuietHour {
-  weekdays: number[]; // ISO 1-7; empty = all days
-  start: string;
-  end: string;
-}
-
 export interface SourceColumn {
   id: string;
   label: string;
@@ -392,33 +346,6 @@ export interface DispatchSimulationEntry {
   penalty: number;
   explanation: string;
 }
-
-export interface CreateDispatchRuleProfileInput {
-  name: string;
-  description?: string;
-  pluginCode?: string;
-  workflowCode?: string;
-  styleId?: string;
-  source?: string;
-  enqueueSource?: string;
-  dailyLimit?: number;
-  minIntervalMinutes?: number;
-  timeWindowStart?: string;
-  timeWindowEnd?: string;
-  priority?: number;
-  enabled?: boolean;
-  cadencePreset?: DispatchCadencePreset;
-  weeklyLimit?: number;
-  jitterMinutes?: number;
-  windows?: DispatchWindow[];
-  quietHours?: DispatchQuietHour[];
-  blackoutDates?: string[];
-  sameStyleMinGapMinutes?: number;
-  onConflict?: DispatchConflictStrategy;
-  sourceColumnIds?: string[];
-}
-
-export interface UpdateDispatchRuleProfileInput extends Partial<CreateDispatchRuleProfileInput> { }
 
 export interface AssignScheduleOptions {
   nowIso?: string;
