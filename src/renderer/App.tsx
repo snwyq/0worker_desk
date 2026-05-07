@@ -94,7 +94,7 @@ export function App() {
       case 'accounts': return <AccountsPage />;
       case 'distribution': return <QueuePage />;
       case 'hot-topics': return <HotTopicsPage onOpenAgent={() => openModule('agent-engine')} />;
-      case 'hot-people': return <HotPeoplePage />;
+      case 'hot-people': return <HotPeoplePage onOpenHotTopics={() => openModule('hot-topics')} />;
       case 'hot-bazi': return <HotBaziPage />;
       case 'settings': return <SettingsPage />;
       default: return <HomePage />;

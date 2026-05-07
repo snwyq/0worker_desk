@@ -72,7 +72,7 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
   const [lastFetchTime, setLastFetchTime] = useState<string | null>(null);
   const [lastInsertedCount, setLastInsertedCount] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('today');
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState('');
 
@@ -143,6 +143,17 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
     void loadHotTopics(false);
   }, []);
 
+  const isToday = (dateString: string | undefined) => {
+    if (!dateString) return false;
+    const d = new Date(dateString);
+    const now = new Date();
+    return d.getFullYear() === now.getFullYear() && 
+           d.getMonth() === now.getMonth() && 
+           d.getDate() === now.getDate();
+  };
+
+  const todayTopicsCount = useMemo(() => hotTopics.filter(t => isToday(t.createdAt)).length, [hotTopics]);
+
   const platforms = useMemo(() => (
     Array.from(new Set(hotTopics.map((topic) => topic.platform).filter(Boolean))) as string[]
   ), [hotTopics]);
@@ -150,9 +161,12 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
   const filteredTopics = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return hotTopics.filter((topic) => {
-      const matchesFilter = filter === 'all' || topic.platform === filter;
-      if (!query) return matchesFilter;
-      return matchesFilter && JSON.stringify(topic).toLowerCase().includes(query);
+      const isTimeMatch = filter === 'today' ? isToday(topic.createdAt) : true;
+      const isPlatformMatch = (filter === 'all' || filter === 'today') ? true : topic.platform === filter;
+      
+      if (!isTimeMatch || !isPlatformMatch) return false;
+      if (!query) return true;
+      return JSON.stringify(topic).toLowerCase().includes(query);
     });
   }, [filter, hotTopics, searchQuery]);
 
@@ -191,26 +205,38 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
             <div className="tw-flex tw-items-center tw-gap-3 tw-mt-0.5">
               <span className="tw-text-[11px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-wider">实时热度素材库</span>
               <div className="tw-h-1 tw-w-1 tw-bg-slate-200 tw-rounded-full" />
-              <span className="tw-text-[11px] tw-font-bold tw-text-brand-500">{filteredTopics.length} 话题已就绪</span>
+              <div className="tw-flex tw-items-center tw-gap-2 tw-text-[11px] tw-font-bold">
+                <span className="tw-text-brand-500">今日新增 {todayTopicsCount}</span>
+                <span className="tw-text-slate-300">/</span>
+                <span className="tw-text-slate-400">库内总计 {hotTopics.length}</span>
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="tw-flex tw-items-center tw-gap-4">
-          {isCoolingDown && !loading && (
-            <div className="tw-flex tw-items-center tw-gap-1.5 tw-text-[11px] tw-font-bold tw-text-orange-500/80">
-              <Clock size={12} />
-              <span>距下次同步 {cooldownHours}h {Math.max(cooldownMinutes, 1)}m</span>
-            </div>
+        <div className="tw-flex tw-flex-col tw-items-end tw-gap-1">
+          <div className="tw-flex tw-items-center tw-gap-4">
+            {isCoolingDown && !loading && (
+              <div className="tw-flex tw-items-center tw-gap-1.5 tw-text-[11px] tw-font-bold tw-text-orange-500/80">
+                <Clock size={12} />
+                <span>距下次同步 {cooldownHours}h {Math.max(cooldownMinutes, 1)}m</span>
+              </div>
+            )}
+            <button
+              onClick={() => void loadHotTopics(true)}
+              disabled={loading || isCoolingDown}
+              className={`tw-flex tw-items-center tw-gap-2 tw-px-6 tw-py-2.5 tw-bg-white tw-rounded-2xl tw-shadow-sm tw-text-xs tw-font-bold tw-transition-all active:tw-scale-95 ${loading || isCoolingDown ? 'tw-text-slate-300' : 'tw-text-brand-500 hover:tw-bg-brand-50/50'}`}
+            >
+              <RefreshCw size={14} className={loading ? 'tw-animate-spin' : ''} />
+              {loading ? t('hotTopics.syncing') : '同步最新热点'}
+            </button>
+          </div>
+          {lastFetchTime && (
+            <span className="tw-text-[10px] tw-font-bold tw-text-slate-300">
+              上次同步: {new Date(lastFetchTime).toLocaleString()} 
+              {lastInsertedCount > 0 && ` (新增 ${lastInsertedCount} 条)`}
+            </span>
           )}
-          <button
-            onClick={() => void loadHotTopics(true)}
-            disabled={loading || isCoolingDown}
-            className={`tw-flex tw-items-center tw-gap-2 tw-px-6 tw-py-2.5 tw-bg-white tw-rounded-2xl tw-shadow-sm tw-text-xs tw-font-bold tw-transition-all active:tw-scale-95 ${loading || isCoolingDown ? 'tw-text-slate-300' : 'tw-text-brand-500 hover:tw-bg-brand-50/50'}`}
-          >
-            <RefreshCw size={14} className={loading ? 'tw-animate-spin' : ''} />
-            {loading ? t('hotTopics.syncing') : '同步最新热点'}
-          </button>
         </div>
       </div>
 
@@ -231,11 +257,18 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
           
           <div className="tw-flex tw-items-center tw-gap-2 tw-overflow-x-auto tw-scrollbar-none">
             <button
+              onClick={() => setFilter('today')}
+              className={`tw-px-5 tw-py-2.5 tw-rounded-xl tw-text-xs tw-font-bold tw-transition-all ${filter === 'today' ? 'tw-bg-brand-500 tw-text-white tw-shadow-lg tw-shadow-brand-500/20' : 'tw-bg-slate-50 tw-text-slate-500 hover:tw-bg-slate-100'}`}
+            >
+              今日热点 ({todayTopicsCount})
+            </button>
+            <button
               onClick={() => setFilter('all')}
               className={`tw-px-5 tw-py-2.5 tw-rounded-xl tw-text-xs tw-font-bold tw-transition-all ${filter === 'all' ? 'tw-bg-brand-500 tw-text-white tw-shadow-lg tw-shadow-brand-500/20' : 'tw-bg-slate-50 tw-text-slate-500 hover:tw-bg-slate-100'}`}
             >
-              全部
+              全部 ({hotTopics.length})
             </button>
+            <div className="tw-w-[1px] tw-h-4 tw-bg-slate-200 tw-mx-2" />
             {platforms.map(p => (
               <button
                 key={p}
@@ -292,6 +325,11 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
                             </span>
                           ) : col.key === 'title' ? (
                             <div className="tw-flex tw-items-center tw-gap-2 tw-max-w-full">
+                              {isToday(topic.createdAt) && (
+                                <span className="tw-shrink-0 tw-px-1.5 tw-py-0.5 tw-rounded tw-bg-brand-500 tw-text-white tw-text-[9px] tw-font-black tw-animate-pulse">
+                                  NEW
+                                </span>
+                              )}
                               <span className="tw-text-sm tw-font-bold tw-text-slate-700 tw-truncate" title={String(val)}>
                                 {val || '未命名话题'}
                               </span>

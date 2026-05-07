@@ -1,5 +1,6 @@
 import type { AppDatabase } from '../db/database.js';
 import type { PlatformCode, PostStatus } from '../../shared/types.js';
+import { humanPostPublishCooldown } from './HumanDelay.js';
 import { publishPostNow } from './PublishService.js';
 
 export interface SchedulerStatus {
@@ -120,7 +121,9 @@ export class PublishScheduler {
     }
 
     let published = 0;
-    for (const task of dueTasks) {
+    for (let i = 0; i < dueTasks.length; i++) {
+      const task = dueTasks[i];
+      const isLastTask = i === dueTasks.length - 1;
       const account = this.repositories.accounts.findById(task.accountId);
       if (!account) {
         this.recordTaskRun(task.id, task.accountId, task.platform, 'failed', `Account ${task.accountId} was not found`);
@@ -136,6 +139,10 @@ export class PublishScheduler {
         const result = await publishPostNow(this.repositories, task.legacyPostId, { ignoreSchedule: false });
         if (result.ok) {
           published += 1;
+          // 帖间拟人冷却：3~8s 随机等待，避免连续发帖被风控
+          if (!isLastTask) {
+            await humanPostPublishCooldown();
+          }
         } else if (!result.status) {
           this.recordTaskRun(task.id, task.accountId, task.platform, 'failed', result.message);
         }
@@ -146,6 +153,10 @@ export class PublishScheduler {
       const result = await publishPostNow(this.repositories, post.id, { ignoreSchedule: false });
       if (result.ok) {
         published += 1;
+        // 帖间拟人冷却
+        if (!isLastTask) {
+          await humanPostPublishCooldown();
+        }
       } else if (!result.status) {
         this.recordTaskRun(task.id, task.accountId, task.platform, 'failed', result.message);
       }

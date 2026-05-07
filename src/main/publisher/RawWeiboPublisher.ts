@@ -2,6 +2,15 @@ import fs from 'node:fs';
 import type { Post } from '../../shared/types.js';
 import type { AdsPowerBrowserInfo } from '../browser/AdsPowerApi.js';
 import { RawCdpClient } from '../browser/RawCdpClient.js';
+import {
+  humanDelay,
+  humanPreClickPause,
+  humanJitterCoord,
+  humanClickPressDuration,
+  humanTypingChunks,
+  generateMousePath,
+  randomMouseOrigin,
+} from './HumanDelay.js';
 import { normalizeWeiboPostText } from './WeiboContent.js';
 import { appendWeiboPublishLog } from './WeiboDiagnostics.js';
 import {
@@ -32,6 +41,8 @@ interface ButtonLocation {
   title: string;
   x?: number;
   y?: number;
+  width?: number;
+  height?: number;
 }
 
 interface RawPublishOptions {
@@ -151,6 +162,59 @@ export async function fillWeiboDraft(browserInfo: AdsPowerBrowserInfo, post: Pos
 }
 
 async function fillComposeText(client: RawCdpClient, content: string) {
+  // 分段打字：将内容拆为多段模拟真人输入节奏
+  const chunks = humanTypingChunks(content);
+
+  // 第一步：一次性注入 helpers 并验证 textarea 存在
+  const initResult = await client.send<{ result: { value: { ok: boolean } } }>('Runtime.evaluate', {
+    expression: `(() => {
+      ${weiboDomRuntimeHelpers()}
+      // 挂载到 window 上供后续分段使用，避免重复注入
+      window.__wbTextarea = findComposeTextarea();
+      window.__wbValueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      return { ok: Boolean(window.__wbTextarea) };
+    })()`,
+    awaitPromise: true,
+    returnByValue: true,
+  });
+
+  if (!initResult.result.value.ok) {
+    // textarea 未找到时走兜底——整体注入一次（兼容旧逻辑）
+    return {
+      ok: false,
+      message: 'Weibo compose textarea was not found',
+      url: '',
+      title: '',
+      sendButtonText: '',
+      sendButtonDisabled: true,
+    };
+  }
+
+  // 第二步：分段写入（轻量 evaluate，不重复注入 helpers）
+  let accumulated = '';
+  for (const chunk of chunks) {
+    accumulated += chunk.text;
+    const currentValue = accumulated;
+
+    await client.send<{ result: { value: unknown } }>('Runtime.evaluate', {
+      expression: `(() => {
+        const textarea = window.__wbTextarea;
+        const valueSetter = window.__wbValueSetter;
+        if (!textarea) return { ok: false };
+        textarea.focus();
+        valueSetter?.call(textarea, ${JSON.stringify(currentValue)});
+        textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ${JSON.stringify(chunk.text)} }));
+        return { ok: true };
+      })()`,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+
+    // 段间停顿，模拟打字节奏
+    await new Promise((resolve) => setTimeout(resolve, chunk.delayMs));
+  }
+
+  // 最终触发 change 事件 + 读取按钮状态
   const result = await client.send<{ result: { value: {
     ok: boolean;
     message: string;
@@ -161,17 +225,12 @@ async function fillComposeText(client: RawCdpClient, content: string) {
   } } }>('Runtime.evaluate', {
     expression: `(() => {
       ${weiboDomRuntimeHelpers()}
-      const content = ${JSON.stringify(content)};
       const textarea = findComposeTextarea();
 
       if (!textarea) {
         return { ok: false, message: 'Weibo compose textarea was not found', url: location.href, title: document.title };
       }
 
-      textarea.focus();
-      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-      valueSetter?.call(textarea, content);
-      textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: content }));
       textarea.dispatchEvent(new Event('change', { bubbles: true }));
 
       const sendButton = findSendButton();
@@ -309,7 +368,7 @@ async function waitForSendReady(client: RawCdpClient, options: {
       );
       lastLogAt = Date.now();
     }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await humanDelay(1200, 0.3);
   }
 
   return {
@@ -408,30 +467,42 @@ async function clickSendUntilPublished(client: RawCdpClient, options: {
 }) {
   const started = Date.now();
   let clickCount = 0;
+  // 连续失败次数，用于指数退避
+  let consecutiveFailCount = 0;
 
   while (Date.now() - started < options.timeoutMs) {
     const ready = await readSendStatus(client, options.mediaCount);
     if (!ready.ok) {
       await options.log(`Send not ready before click retry: ${ready.message}; uploadText=${ready.hasUploadingText}, disabled=${ready.sendButtonDisabled}`);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await humanDelay(2500, 0.3);
       continue;
     }
 
     const button = await locateSendButton(client);
     if (!button.ok || button.x === undefined || button.y === undefined) {
       await options.log(`Send button cannot be clicked: ${button.message}`);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await humanDelay(2500, 0.3);
       continue;
     }
 
     clickCount += 1;
-    await options.log(`Dispatching raw send click attempt ${clickCount} at ${button.x},${button.y}`);
-    await dispatchRawClick(client, button.x, button.y);
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    // 拟人化点击前停顿：模拟"看一眼按钮再点"
+    await humanPreClickPause();
+
+    // 坐标区域内随机偏移，避免每次精确命中同一像素
+    const jittered = humanJitterCoord(button.x, button.y, button.width, button.height);
+    await options.log(`Dispatching raw send click attempt ${clickCount} at ${jittered.x},${jittered.y} (base ${button.x},${button.y})`);
+    await dispatchRawClick(client, jittered.x, jittered.y);
+
+    // 退避等待：基准 2.5s + 连续失败递增，高斯随机化
+    const postClickBaseMs = 2500 + consecutiveFailCount * 800;
+    await humanDelay(Math.min(postClickBaseMs, 5500), 0.25);
 
     const verify = await verifySendClick(client);
     await options.log(`Verify after click ${clickCount}: ${verify.message}; remaining=${Boolean(verify.remainingText)}, disabled=${verify.sendButtonDisabled}`);
     if (verify.ok) {
+      consecutiveFailCount = 0;
       return {
         ok: true,
         message: `${verify.message}${options.suffix()}`,
@@ -446,6 +517,7 @@ async function clickSendUntilPublished(client: RawCdpClient, options: {
       hasUploadingText: verify.hasUploadingText,
     });
     if (retryDecision === 'stop') {
+      consecutiveFailCount = 0;
       return {
         ok: true,
         message: `${verify.message}${options.suffix()}`,
@@ -454,9 +526,10 @@ async function clickSendUntilPublished(client: RawCdpClient, options: {
       };
     }
     if (retryDecision === 'full-wait') {
+      consecutiveFailCount = 0;
       const cooldownMs = getWeiboUploadBlockCooldownMs(options.mediaCount);
       await options.log(`Upload blocking text appeared after click; cooling down ${cooldownMs}ms before full send-ready wait`);
-      await new Promise((resolve) => setTimeout(resolve, cooldownMs));
+      await humanDelay(cooldownMs, 0.2);
       await waitForSendReady(client, {
         hasMedia: options.hasMedia,
         mediaCount: options.mediaCount,
@@ -464,6 +537,9 @@ async function clickSendUntilPublished(client: RawCdpClient, options: {
         phase: 'publish',
         log: options.log,
       });
+    } else {
+      // quick-retry：累计连续失败，触发退避
+      consecutiveFailCount += 1;
     }
   }
 
@@ -476,12 +552,21 @@ async function clickSendUntilPublished(client: RawCdpClient, options: {
 }
 
 async function dispatchRawClick(client: RawCdpClient, x: number, y: number) {
-  await client.send('Input.dispatchMouseEvent', {
-    type: 'mouseMoved',
-    x,
-    y,
-    button: 'none',
-  });
+  // 拟人鼠标轨迹：从随机起始点经贝塞尔曲线滑向目标
+  const origin = randomMouseOrigin(x, y);
+  const path = generateMousePath(origin.x, origin.y, x, y);
+
+  for (const point of path) {
+    await client.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: point.x,
+      y: point.y,
+      button: 'none',
+    });
+    await new Promise((resolve) => setTimeout(resolve, point.delayMs));
+  }
+
+  // 按下鼠标
   await client.send('Input.dispatchMouseEvent', {
     type: 'mousePressed',
     x,
@@ -489,6 +574,12 @@ async function dispatchRawClick(client: RawCdpClient, x: number, y: number) {
     button: 'left',
     clickCount: 1,
   });
+
+  // 拟人按压时长：60~130ms（真人按下到松开不是瞬时的）
+  const pressDuration = humanClickPressDuration();
+  await new Promise((resolve) => setTimeout(resolve, pressDuration));
+
+  // 松开鼠标
   await client.send('Input.dispatchMouseEvent', {
     type: 'mouseReleased',
     x,
@@ -520,6 +611,8 @@ async function locateSendButton(client: RawCdpClient): Promise<ButtonLocation> {
         title: document.title,
         x: Math.round(rect.left + rect.width / 2),
         y: Math.round(rect.top + rect.height / 2),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
       };
     })()`,
     awaitPromise: true,

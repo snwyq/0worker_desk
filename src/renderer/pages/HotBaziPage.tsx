@@ -102,6 +102,7 @@ export function HotBaziPage() {
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [editingContent, setEditingContent] = useState('');
+  const [editingMediaPaths, setEditingMediaPaths] = useState<string[]>([]);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showPromptModal, setShowPromptModal] = useState(false);
 
@@ -315,6 +316,22 @@ export function HotBaziPage() {
   function startEdit(task: HotBaziTask) {
     setEditingTaskId(task.id);
     setEditingContent(taskContentPreview(task));
+    setEditingMediaPaths(task.mediaPathsJson || []);
+  }
+
+  async function handleSelectMedia() {
+    try {
+      const files = await appApi.media.selectFiles();
+      if (files && files.length > 0) {
+        setEditingMediaPaths((current) => [...current, ...files]);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  function removeMedia(path: string) {
+    setEditingMediaPaths((current) => current.filter((p) => p !== path));
   }
 
   async function saveEdit(task: HotBaziTask) {
@@ -326,9 +343,11 @@ export function HotBaziPage() {
           ...task.platformPayload,
           content: editingContent,
         },
+        mediaPathsJson: editingMediaPaths,
       });
       setEditingTaskId(null);
       setEditingContent('');
+      setEditingMediaPaths([]);
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -523,30 +542,17 @@ export function HotBaziPage() {
                       <td className="tw-whitespace-nowrap tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-text-slate-600">{accountNameById.get(task.accountId) || task.accountId}</td>
                       <td className="tw-whitespace-nowrap tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-font-bold tw-text-slate-600">{task.status === 'queued' ? '已送到发布调度' : '待送调度'}</td>
                       <td className="tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-text-slate-700">
-                        {editingTaskId === task.id ? (
-                          <div className="tw-space-y-3">
-                            <textarea value={editingContent} onChange={(event) => setEditingContent(event.target.value)} rows={8} className="tw-w-full tw-rounded-xl tw-border tw-border-slate-200 tw-bg-white tw-p-3 tw-text-sm tw-outline-none" aria-label={`编辑任务 ${task.sourceTopic || task.id} 的正文`} />
-                            <div className="tw-flex tw-gap-2">
-                              <button type="button" onClick={() => void saveEdit(task)} disabled={isSavingTaskId === task.id} className={actionButtonPrimaryClass}>
-                                {isSavingTaskId === task.id ? <Loader2 size={12} className="tw-animate-spin" /> : null}
-                                保存
-                              </button>
-                              <button type="button" onClick={() => setEditingTaskId(null)} className={actionButtonNeutralClass}>取消</button>
-                            </div>
+                        <div className="tw-max-w-[320px] md:tw-max-w-[420px] tw-overflow-hidden tw-text-ellipsis tw-leading-6" style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', whiteSpace: 'pre-wrap' }}>
+                          {taskContentPreview(task) || '还没有正文内容'}
+                        </div>
+                        {task.mediaPathsJson.length > 0 && (
+                          <div className="tw-mt-3 tw-flex tw-flex-wrap tw-gap-2">
+                            {task.mediaPathsJson.map((path) => (
+                              <span key={path} className="tw-rounded-full tw-bg-slate-100 tw-px-2 tw-py-1 tw-text-[9px] tw-font-bold tw-text-slate-500 tw-border tw-border-slate-200 tw-truncate tw-max-w-[120px]" title={path}>
+                                {path.split(/[\\/]/).pop()}
+                              </span>
+                            ))}
                           </div>
-                        ) : (
-                          <>
-                            <div className="tw-max-w-[320px] md:tw-max-w-[420px] tw-overflow-hidden tw-text-ellipsis tw-leading-6" style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', whiteSpace: 'pre-wrap' }}>
-                              {taskContentPreview(task) || '还没有正文内容'}
-                            </div>
-                            {task.mediaPathsJson.length > 0 && (
-                              <div className="tw-mt-3 tw-flex tw-flex-wrap tw-gap-2">
-                                {task.mediaPathsJson.map((path) => (
-                                  <span key={path} className="tw-rounded-full tw-bg-white tw-px-2.5 tw-py-1 tw-text-[11px] tw-font-bold tw-text-slate-500 tw-border tw-border-slate-200">{path}</span>
-                                ))}
-                              </div>
-                            )}
-                          </>
                         )}
                       </td>
                       <td className="tw-px-3 tw-py-4 tw-align-top">
@@ -667,6 +673,103 @@ export function HotBaziPage() {
               </div>
             </div>
             <textarea value={promptTemplate} onChange={(event) => setPromptTemplate(event.target.value)} rows={22} className="tw-w-full tw-rounded-2xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-p-4 tw-text-sm tw-font-medium tw-leading-6 tw-outline-none focus:tw-bg-white" aria-label="热点八字提示词编辑器" />
+          </div>
+        </div>
+      )}
+
+      {editingTaskId && (
+        <div className="tw-fixed tw-inset-0 tw-z-[100] tw-flex tw-items-center tw-justify-center tw-bg-slate-900/40 tw-backdrop-blur-sm tw-p-4 sm:tw-p-6">
+          <div className="tw-w-full tw-max-w-3xl tw-bg-white tw-rounded-[2rem] tw-shadow-2xl tw-overflow-hidden tw-animate-in tw-fade-in tw-zoom-in tw-duration-200">
+            <div className="tw-px-8 tw-py-6 tw-border-b tw-border-slate-100 tw-flex tw-items-center tw-justify-between">
+              <div>
+                <h3 className="tw-text-xl tw-font-black tw-text-slate-900">编辑任务</h3>
+                <p className="tw-text-xs tw-font-bold tw-text-slate-400 tw-mt-1">
+                  正在编辑：{tasks.find(t => t.id === editingTaskId)?.sourceTopic || '热点素材'}
+                </p>
+              </div>
+              <button 
+                onClick={() => setEditingTaskId(null)}
+                className="tw-p-2 tw-rounded-full hover:tw-bg-slate-100 tw-text-slate-400 hover:tw-text-slate-600 tw-transition-all"
+              >
+                取消
+              </button>
+            </div>
+            
+            <div className="tw-p-8 tw-space-y-6">
+              <div className="tw-space-y-2">
+                <label className="tw-text-[12px] tw-font-black tw-text-slate-500 tw-uppercase tw-tracking-widest">
+                  文案内容
+                </label>
+                <textarea 
+                  value={editingContent} 
+                  onChange={(e) => setEditingContent(e.target.value)} 
+                  rows={10} 
+                  className="tw-w-full tw-rounded-2xl tw-border-2 tw-border-slate-100 tw-bg-slate-50/50 tw-p-4 tw-text-sm tw-font-medium tw-leading-relaxed tw-outline-none focus:tw-border-brand-500/20 focus:tw-bg-white tw-transition-all" 
+                />
+              </div>
+
+              <div className="tw-space-y-3">
+                <div className="tw-flex tw-items-center tw-justify-between">
+                  <label className="tw-text-[12px] tw-font-black tw-text-slate-500 tw-uppercase tw-tracking-widest">
+                    媒体素材 ({editingMediaPaths.length})
+                  </label>
+                  <button 
+                    type="button"
+                    onClick={handleSelectMedia}
+                    className="tw-flex tw-items-center tw-gap-1.5 tw-px-3 tw-py-1.5 tw-bg-brand-50 tw-text-brand-600 tw-rounded-lg tw-text-xs tw-font-bold hover:tw-bg-brand-100 tw-transition-all"
+                  >
+                    <Settings2 size={12} />
+                    添加素材
+                  </button>
+                </div>
+                
+                <div className="tw-flex tw-flex-wrap tw-gap-2">
+                  {editingMediaPaths.map((path) => (
+                    <div key={path} className="tw-group tw-relative tw-flex tw-items-center tw-gap-2 tw-px-3 tw-py-2 tw-bg-slate-50 tw-border tw-border-slate-100 tw-rounded-xl tw-max-w-[240px]">
+                      <div className="tw-min-w-0 tw-flex-1">
+                        <p className="tw-text-[11px] tw-font-bold tw-text-slate-600 tw-truncate" title={path}>
+                          {path.split(/[\\/]/).pop()}
+                        </p>
+                      </div>
+                      <button 
+                        onClick={() => removeMedia(path)}
+                        className="tw-text-slate-300 hover:tw-text-red-500 tw-transition-colors"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  {editingMediaPaths.length === 0 && (
+                    <div className="tw-w-full tw-py-8 tw-border-2 tw-border-dashed tw-border-slate-100 tw-rounded-2xl tw-flex tw-flex-col tw-items-center tw-justify-center tw-gap-2 tw-text-slate-300">
+                      <Settings2 size={24} />
+                      <span className="tw-text-[11px] tw-font-bold">暂无上传素材</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="tw-px-8 tw-py-6 tw-bg-slate-50/50 tw-border-t tw-border-slate-100 tw-flex tw-items-center tw-justify-end tw-gap-3">
+              <button 
+                type="button" 
+                onClick={() => setEditingTaskId(null)} 
+                className="tw-px-6 tw-py-2.5 tw-text-sm tw-font-bold tw-text-slate-500 hover:tw-text-slate-700"
+              >
+                取消
+              </button>
+              <button 
+                type="button" 
+                onClick={() => {
+                  const task = tasks.find(t => t.id === editingTaskId);
+                  if (task) void saveEdit(task);
+                }} 
+                disabled={isSavingTaskId === editingTaskId} 
+                className="tw-flex tw-items-center tw-gap-2 tw-px-8 tw-py-2.5 tw-bg-slate-900 tw-text-white tw-rounded-xl tw-text-sm tw-font-black hover:tw-bg-slate-800 tw-shadow-lg tw-shadow-slate-900/20 tw-transition-all active:tw-scale-95"
+              >
+                {isSavingTaskId === editingTaskId && <Loader2 size={14} className="tw-animate-spin" />}
+                保存修改
+              </button>
+            </div>
           </div>
         </div>
       )}

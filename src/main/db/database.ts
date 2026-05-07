@@ -2156,19 +2156,32 @@ export async function createDatabase(filename: string) {
         `).run(message, timestamp, hotTopicId);
       },
       getQueueSummary() {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const whereToday = `WHERE createdAt LIKE '${todayStr}%'`;
+
+        const totalRow = sqlite.prepare(`SELECT COUNT(*) AS count FROM hot_topic_analysis ${whereToday}`).get() as { count: number };
         const pendingRow = sqlite.prepare(`
           SELECT COUNT(*) AS count
           FROM hot_topic_analysis
-          WHERE status IN ('pending', 'extracted')
+          ${whereToday} AND status IN ('pending', 'extracted')
         `).get() as { count: number };
-        const coolingRow = sqlite.prepare(`
+        const completedRow = sqlite.prepare(`
           SELECT COUNT(*) AS count
           FROM hot_topic_analysis
-          WHERE 1 = 0
+          ${whereToday} AND status = 'completed'
         `).get() as { count: number };
+        const failedRow = sqlite.prepare(`
+          SELECT COUNT(*) AS count
+          FROM hot_topic_analysis
+          ${whereToday} AND status = 'failed'
+        `).get() as { count: number };
+        
         return {
+          totalTopics: Number(totalRow?.count ?? 0),
           pendingTopics: Number(pendingRow?.count ?? 0),
-          coolingFailedTopics: Number(coolingRow?.count ?? 0),
+          completedTopics: Number(completedRow?.count ?? 0),
+          failedTopics: Number(failedRow?.count ?? 0),
+          coolingFailedTopics: 0,
           nextRetryAt: '',
         };
       },

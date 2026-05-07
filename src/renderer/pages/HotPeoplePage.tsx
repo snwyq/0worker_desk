@@ -14,7 +14,8 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
-  LayoutGrid
+  LayoutGrid,
+  TrendingUp
 } from 'lucide-react';
 import type { HotPerson } from '../../shared/types';
 import { appApi } from '../api';
@@ -38,13 +39,14 @@ function buildBaikeSearchUrl(name: string) {
   return `https://baike.baidu.com/search/word?word=${encodeURIComponent(name)}`;
 }
 
-export function HotPeoplePage() {
+export function HotPeoplePage({ onOpenHotTopics }: { onOpenHotTopics?: () => void }) {
   const [items, setItems] = useState<HotPerson[]>([]);
   const [failedTopics, setFailedTopics] = useState<FailedHotTopic[]>([]);
   const [todayHotTopicCount, setTodayHotTopicCount] = useState(0); // 待扫描
   const [todayTotalTopics, setTodayTotalTopics] = useState(0);
   const [processedTopics, setProcessedTopics] = useState(0); // 已完成
   const [pendingTopics, setPendingTopics] = useState(0);
+  const [todayFailedCount, setTodayFailedCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [showMoreActions, setShowMoreActions] = useState(false);
@@ -85,25 +87,29 @@ export function HotPeoplePage() {
       const next = await appApi.ai.listHotPeople();
       setItems(next || []);
       
-      // 2. 获取今日采集的总热点数
-      const hotTopics = await appApi.ai.listHotTopics(false).catch(() => ({ items: [] as any[] }));
-      const total = Array.isArray(hotTopics.items) ? hotTopics.items.length : 0;
-      setTodayTotalTopics(total);
+      // 2. 获取统计摘要
+      const queueSummary = await appApi.ai.getHotPeopleQueueSummary().catch(() => ({ 
+        totalTopics: 0, 
+        pendingTopics: 0, 
+        completedTopics: 0, 
+        failedTopics: 0 
+      }));
+      
+      const qTotal = Number(queueSummary.totalTopics ?? 0);
+      const qPending = Number(queueSummary.pendingTopics ?? 0);
+      const qCompleted = Number(queueSummary.completedTopics ?? 0);
+      const qFailed = Number(queueSummary.failedTopics ?? 0);
 
-      // 3. 获取待处理数
-      const queueSummary = await appApi.ai.getHotPeopleQueueSummary().catch(() => ({ pendingTopics: 0 }));
-      const pending = Number(queueSummary.pendingTopics ?? 0);
-      setPendingTopics(pending);
-      setTodayHotTopicCount(pending);
+      // 确保总数至少等于各部分之和，防止数据库逻辑差异
+      setTodayTotalTopics(Math.max(qTotal, qPending + qCompleted + qFailed));
+      setPendingTopics(qPending);
+      setTodayHotTopicCount(qPending);
+      setProcessedTopics(qCompleted);
+      setTodayFailedCount(qFailed); // 新增 state 记录失败数
 
-      // 4. 获取失败记录数
+      // 3. 获取失败记录列表（仅用于列表显示）
       const failed = await fetch('http://127.0.0.1:5183/ai/hot-people-failed').then((response) => response.json()).catch(() => []);
-      const failedCount = Array.isArray(failed) ? failed.length : 0;
       setFailedTopics(failed || []);
-
-      // 5. 计算已完成数 = 总数 - 待处理 - 失败
-      const done = Math.max(0, total - pending - failedCount);
-      setProcessedTopics(done);
 
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -143,6 +149,12 @@ export function HotPeoplePage() {
 
   useEffect(() => {
     void load();
+    // 初始检查分析状态
+    void appApi.ai.getHotPeopleAnalyzeProgress().then((progress) => {
+      if (progress.running) {
+        setAnalyzing(true);
+      }
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -150,6 +162,11 @@ export function HotPeoplePage() {
 
     const timer = window.setInterval(() => {
       void appApi.ai.getHotPeopleAnalyzeProgress().then((progress) => {
+        if (!progress.running) {
+          setAnalyzing(false);
+          void load(); // 运行结束，刷新一次完整数据
+          return;
+        }
         const pending = Number(progress.pendingTopics ?? 0);
         setPendingTopics(pending);
         setTodayHotTopicCount(pending);
@@ -168,67 +185,84 @@ export function HotPeoplePage() {
 
   return (
     <div className="tw-relative tw-min-h-screen tw-animate-fade-in tw-pb-6 tw-px-1 md:tw-px-4">
-      {/* 极致简约：单行扁平任务控制台 */}
-      <div className="tw-mb-3 tw-flex tw-items-center tw-justify-between tw-py-2 tw-border-b tw-border-slate-100">
-        <div className="tw-flex tw-items-center tw-gap-6">
+      {/* 极简任务控制台 */}
+      <div className="tw-mb-4 tw-flex tw-items-center tw-justify-between tw-py-3 tw-border-b tw-border-slate-100">
+        <div className="tw-flex tw-items-center tw-gap-5">
           <div className="tw-flex tw-items-center tw-gap-2">
-            <div className="tw-flex tw-h-8 tw-w-8 tw-items-center tw-justify-center tw-rounded-lg tw-bg-slate-900 tw-text-white">
-              <UserRound size={16} />
-            </div>
             <h1 className="tw-text-lg tw-font-black tw-text-slate-900 tw-tracking-tight">
               热点人物<span className="tw-text-brand-500">库</span>
             </h1>
+            {(items.length > 0) && (
+              <span className="tw-text-[10px] tw-font-bold tw-text-slate-300 tw-mt-1">
+                {new Date(items[0].updateTime).toLocaleDateString()}
+              </span>
+            )}
           </div>
 
-          {/* 紧凑型指标组 */}
-          <div className="tw-hidden md:tw-flex tw-items-center tw-gap-4 tw-text-[11px] tw-font-bold">
-            <div className="tw-flex tw-items-center tw-gap-1.5 tw-text-slate-500">
-              <Hash size={12} className="tw-text-slate-300" />
-              资讯总计: <span className="tw-text-slate-900">{todayTotalTopics}</span>
+          <div className="tw-h-4 tw-w-[1px] tw-bg-slate-200" />
+
+          {todayTotalTopics === 0 ? (
+            <button 
+              onClick={onOpenHotTopics}
+              className="tw-flex tw-items-center tw-gap-2 tw-text-brand-600 tw-text-xs tw-font-bold hover:tw-underline tw-transition-all"
+            >
+              <TrendingUp size={14} />
+              <span>今日尚未采集热点，前往获取 →</span>
+            </button>
+          ) : (
+            <div className="tw-flex tw-items-center tw-gap-4 tw-text-[11px] tw-font-bold tw-text-slate-500">
+              <span>今日采集 <b className="tw-text-slate-900">{todayTotalTopics}</b></span>
+              <span>分析完成 <b className="tw-text-emerald-600">{processedTopics}</b></span>
+              {todayFailedCount > 0 && (
+                <span className="tw-text-red-500">失败 {todayFailedCount}</span>
+              )}
             </div>
-            <div className="tw-flex tw-items-center tw-gap-1.5 tw-text-slate-500">
-              <CheckCircle2 size={12} className="tw-text-emerald-500" />
-              已完成: <span className="tw-text-emerald-600">{processedTopics}</span>
-            </div>
-            <div className="tw-flex tw-items-center tw-gap-1.5 tw-text-slate-500">
-              <AlertCircle size={12} className={failedTopics.length > 0 ? 'tw-text-red-500' : 'tw-text-slate-300'} />
-              失败: <span className={failedTopics.length > 0 ? 'tw-text-red-600' : 'tw-text-slate-900'}>{failedTopics.length}</span>
-            </div>
-            <div className="tw-flex tw-items-center tw-gap-1.5 tw-text-slate-500">
-              <Clock size={12} className={todayHotTopicCount > 0 ? 'tw-text-brand-500' : 'tw-text-slate-300'} />
-              剩余: <span className={todayHotTopicCount > 0 ? 'tw-text-brand-600' : 'tw-text-slate-900'}>{todayHotTopicCount}</span>
-            </div>
-          </div>
+          )}
         </div>
 
-        <div className="tw-flex tw-items-center tw-gap-2">
+        <div className="tw-flex tw-items-center tw-gap-3">
           <button
             type="button"
             onClick={() => void load()}
             disabled={loading}
-            className="tw-flex tw-h-9 tw-w-9 tw-items-center tw-justify-center tw-rounded-lg tw-border tw-border-slate-100 tw-bg-white tw-text-slate-400 hover:tw-text-slate-900 tw-transition-all active:tw-scale-95 disabled:tw-opacity-60"
+            className="tw-p-2 tw-text-slate-400 hover:tw-text-slate-900 tw-transition-all disabled:tw-opacity-40"
+            title="刷新数据"
           >
             <RefreshCw size={16} className={loading ? 'tw-animate-spin' : ''} />
           </button>
           
-          <div className="tw-relative">
-            {todayHotTopicCount > 0 && !analyzing && (
-              <div className="tw-absolute tw-right-full tw-mr-3 tw-top-1/2 tw--translate-y-1/2 tw-animate-bounce-x">
-                <div className="tw-rounded tw-bg-brand-500 tw-px-1.5 tw-py-0.5 tw-text-[9px] tw-font-black tw-text-white tw-shadow-lg">
-                  立即扫描 →
-                </div>
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={() => void analyze()}
-              disabled={analyzing}
-              className={`tw-flex tw-items-center tw-gap-2 tw-rounded-lg tw-px-4 tw-py-1.5 tw-text-[13px] tw-font-black tw-transition-all active:tw-scale-95 ${analyzing ? 'tw-bg-slate-100 tw-text-slate-400' : 'tw-bg-slate-900 tw-text-white hover:tw-bg-black'}`}
-            >
-              <Sparkles size={14} className={analyzing ? 'tw-animate-spin' : ''} />
-              <span>{analyzing ? '分析中...' : '开始扫描'}</span>
-            </button>
-          </div>
+          {analyzing && (
+            <div className="tw-flex tw-items-center tw-gap-2 tw-text-[11px] tw-font-bold tw-text-brand-500 tw-animate-pulse">
+              <RefreshCw size={12} className="tw-animate-spin" />
+              <span>正在分析热点特征...</span>
+            </div>
+          )}
+          
+          {todayTotalTopics > 0 && (
+            <div className="tw-flex tw-items-center tw-gap-2">
+              <button
+                type="button"
+                onClick={() => void analyze()}
+                disabled={analyzing || todayHotTopicCount === 0}
+                className={`tw-flex tw-items-center tw-gap-2 tw-rounded-full tw-px-5 tw-py-1.5 tw-text-[12px] tw-font-black tw-transition-all active:tw-scale-95 ${
+                  analyzing 
+                    ? 'tw-bg-slate-100 tw-text-slate-400' 
+                    : (todayHotTopicCount > 0)
+                      ? 'tw-bg-brand-600 tw-text-white hover:tw-bg-brand-700 tw-shadow-md tw-shadow-brand-500/20' 
+                      : 'tw-bg-slate-100 tw-text-slate-500'
+                }`}
+              >
+                <Sparkles size={14} className={analyzing ? 'tw-animate-spin' : ''} />
+                <span>
+                  {analyzing 
+                    ? '分析中...' 
+                    : (todayHotTopicCount > 0)
+                      ? `开始扫描 (${todayHotTopicCount})` 
+                      : '分析已完成'}
+                </span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -535,11 +569,7 @@ export function HotPeoplePage() {
               </div>
             </div>
             <div className="tw-text-[10px] tw-font-bold tw-text-slate-400">
-              {analyzing ? (
-                <span className="tw-animate-pulse tw-text-brand-500">正在分析热点特征...</span>
-              ) : (
-                '系统就绪'
-              )}
+              系统就绪
             </div>
           </div>
         </div>
