@@ -27,6 +27,7 @@ declare global {
       };
       media: {
         selectFiles: () => Promise<string[]>;
+        selectDirectory: () => Promise<string>;
       };
       settings: {
         list: () => Promise<AppSetting[]>;
@@ -117,6 +118,7 @@ declare global {
         resetHotPeopleAnalysis: () => Promise<{ deleted: number; reset: number }>;
         analyzeHotPeople: (input?: AnalyzeHotPeopleInput) => Promise<AnalyzeHotPeopleResult>;
         generateHotBaziBatch?: (input: GenerateHotBaziBatchInput) => Promise<GenerateHotBaziBatchResult>;
+        regenerateHotBaziMedia?: (taskIds: number[], mediaDir?: string) => Promise<{ successCount: number; totalRequested: number }>;
         previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any) => Promise<{ runId: string }>;
         startAgentSchedule: (accountId: number) => Promise<{ ok: boolean; message: string }>;
         onWorkflowLog: (callback: (log: any) => void) => (() => void);

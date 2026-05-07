@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, Copy, Loader2, Pencil, Send, Settings2, Sparkles, Trash2 } from 'lucide-react';
+import { CalendarClock, ChevronLeft, ChevronRight, Copy, FolderOpen, Image as ImageIcon, Loader2, Pencil, Send, Settings2, Sparkles, Trash2, X } from 'lucide-react';
 import { appApi } from '../api';
 import type { Account, HotBaziTask, HotPerson, AiWorkflow } from '../../shared/types';
 
@@ -24,6 +24,7 @@ interface StoredHotBaziConfig {
   batchSize?: string;
   promptTemplate?: string;
   workflowCode?: string;
+  mediaDir?: string;
 }
 
 interface HotBaziRunState {
@@ -110,6 +111,7 @@ export function HotBaziPage() {
   const [model, setModel] = useState<HotBaziModel>(modelOptions.includes(storedConfig.model as HotBaziModel) ? (storedConfig.model as HotBaziModel) : 'deepseek-v3.2');
   const [batchSize, setBatchSize] = useState(storedConfig.batchSize ?? '2');
   const [workflowCode, setWorkflowCode] = useState(storedConfig.workflowCode ?? '');
+  const [mediaDir, setMediaDir] = useState(storedConfig.mediaDir ?? '');
   const [promptTemplate, setPromptTemplate] = useState(storedConfig.promptTemplate || defaultPromptTemplate);
   const [runState, setRunState] = useState<HotBaziRunState>(() => readRunState());
   const [notice, setNotice] = useState('');
@@ -121,11 +123,14 @@ export function HotBaziPage() {
   const [isDeletingTaskId, setIsDeletingTaskId] = useState<number | null>(null);
   const [isEnqueueingTaskId, setIsEnqueueingTaskId] = useState<number | null>(null);
   const [isBatchWorking, setIsBatchWorking] = useState(false);
+  const [lightboxImages, setLightboxImages] = useState<string[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
   const [configDraft, setConfigDraft] = useState({
     accountId: storedConfig.accountId ?? '',
     model: modelOptions.includes(storedConfig.model as HotBaziModel) ? (storedConfig.model as HotBaziModel) : 'deepseek-v3.2',
     batchSize: storedConfig.batchSize ?? '2',
     workflowCode: storedConfig.workflowCode ?? '',
+    mediaDir: storedConfig.mediaDir ?? '',
   });
 
   async function load() {
@@ -177,8 +182,9 @@ export function HotBaziPage() {
       batchSize,
       promptTemplate,
       workflowCode,
+      mediaDir,
     }));
-  }, [accountId, model, batchSize, promptTemplate, workflowCode]);
+  }, [accountId, model, batchSize, promptTemplate, workflowCode, mediaDir]);
 
   useEffect(() => {
     window.localStorage.setItem(HOT_BAZI_RUN_STATE_KEY, JSON.stringify(runState));
@@ -200,6 +206,7 @@ export function HotBaziPage() {
       model,
       batchSize,
       workflowCode,
+      mediaDir,
     });
     setShowConfigModal(true);
   }
@@ -210,6 +217,7 @@ export function HotBaziPage() {
       model,
       batchSize,
       workflowCode,
+      mediaDir,
     });
     setShowConfigModal(false);
   }
@@ -220,6 +228,7 @@ export function HotBaziPage() {
       model: 'deepseek-v3.2',
       batchSize: '2',
       workflowCode: workflows[0]?.code || '',
+      mediaDir: '',
     });
   }
 
@@ -228,6 +237,7 @@ export function HotBaziPage() {
     setModel(configDraft.model);
     setBatchSize(configDraft.batchSize);
     setWorkflowCode(configDraft.workflowCode);
+    setMediaDir(configDraft.mediaDir);
     setShowConfigModal(false);
   }
 
@@ -387,6 +397,27 @@ export function HotBaziPage() {
     }
   }
 
+  async function handleRegenerateMedia() {
+    if (selectedTaskIds.length === 0) return;
+    try {
+      setError('');
+      setNotice('');
+      setIsBatchWorking(true);
+      setRunStatus('running', '正在重新生成图片和排盘...');
+      const result = await appApi.ai.regenerateHotBaziMedia(selectedTaskIds, mediaDir);
+      setNotice(`重新生成完成：成功 ${result.successCount} 条，总计请求 ${result.totalRequested} 条。`);
+      setRunStatus('success', `图片重构完成 (${result.successCount})`);
+      setSelectedTaskIds([]);
+      await load();
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setError(message);
+      setRunStatus('failed', message);
+    } finally {
+      setIsBatchWorking(false);
+    }
+  }
+
   async function handleGenerate() {
     setError('');
     setNotice('');
@@ -399,6 +430,7 @@ export function HotBaziPage() {
         limit: batchSize === 'all' ? todayCompletedHotPeopleCount : Number(batchSize),
         promptTemplate,
         workflowCode, // 绑定栏目 ID
+        mediaDir,
       });
       setNotice(`已生成 ${result.createdContents} 条内容，写入热点八字任务 ${result.createdTasks} 条。`);
       if (result.errors.length > 0) {
@@ -460,6 +492,10 @@ export function HotBaziPage() {
               <Settings2 size={16} />
               更多设置
             </button>
+            <button type="button" onClick={() => window.open('#/export/bazi-chart?preview=1', '_blank', 'width=1080,height=1000')} className="tw-inline-flex tw-h-12 tw-items-center tw-justify-center tw-gap-2 tw-rounded-2xl tw-border tw-border-slate-200 tw-bg-white tw-px-4 tw-text-sm tw-font-bold tw-text-slate-700 hover:tw-bg-slate-50">
+              <ImageIcon size={16} />
+              效果预览
+            </button>
           </div>
           <div className="tw-mt-3 tw-flex tw-flex-wrap tw-items-center tw-gap-2 tw-text-xs tw-font-bold">
             <span className={`tw-rounded-full tw-px-3 tw-py-1 ${runState.status === 'running' ? 'tw-bg-blue-50 tw-text-blue-600' : runState.status === 'success' ? 'tw-bg-emerald-50 tw-text-emerald-600' : runState.status === 'failed' ? 'tw-bg-red-50 tw-text-red-600' : 'tw-bg-slate-100 tw-text-slate-500'}`}>
@@ -484,6 +520,10 @@ export function HotBaziPage() {
               <button type="button" onClick={() => void handleBatchDelete()} disabled={visibleSelectedTaskIds.length === 0 || isBatchWorking} className="tw-inline-flex tw-h-11 tw-items-center tw-justify-center tw-rounded-xl tw-border tw-border-red-200 tw-bg-red-50 tw-px-4 tw-text-xs tw-font-black tw-text-red-600 disabled:tw-cursor-not-allowed disabled:tw-opacity-50">
                 {isBatchWorking ? <Loader2 size={14} className="tw-animate-spin" /> : null}
                 批量删除
+              </button>
+              <button type="button" onClick={() => void handleRegenerateMedia()} disabled={visibleSelectedTaskIds.length === 0 || isBatchWorking} className="tw-inline-flex tw-h-11 tw-items-center tw-justify-center tw-rounded-xl tw-border tw-border-blue-200 tw-bg-blue-50 tw-px-4 tw-text-xs tw-font-black tw-text-blue-600 disabled:tw-cursor-not-allowed disabled:tw-opacity-50">
+                {isBatchWorking ? <Loader2 size={14} className="tw-animate-spin" /> : null}
+                补全图片/排盘
               </button>
             </div>
             <div className="tw-flex tw-items-center tw-gap-1 tw-rounded-2xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-p-1">
@@ -545,15 +585,49 @@ export function HotBaziPage() {
                         <div className="tw-max-w-[320px] md:tw-max-w-[420px] tw-overflow-hidden tw-text-ellipsis tw-leading-6" style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', whiteSpace: 'pre-wrap' }}>
                           {taskContentPreview(task) || '还没有正文内容'}
                         </div>
-                        {task.mediaPathsJson.length > 0 && (
-                          <div className="tw-mt-3 tw-flex tw-flex-wrap tw-gap-2">
-                            {task.mediaPathsJson.map((path) => (
-                              <span key={path} className="tw-rounded-full tw-bg-slate-100 tw-px-2 tw-py-1 tw-text-[9px] tw-font-bold tw-text-slate-500 tw-border tw-border-slate-200 tw-truncate tw-max-w-[120px]" title={path}>
-                                {path.split(/[\\/]/).pop()}
-                              </span>
-                            ))}
-                          </div>
-                        )}
+                        {task.mediaPathsJson.length > 0 && (() => {
+                          const imageExts = ['png', 'jpg', 'jpeg', 'webp'];
+                          const imagePaths = task.mediaPathsJson.filter((p) => imageExts.includes(p.split('.').pop()?.toLowerCase() || ''));
+                          const nonImagePaths = task.mediaPathsJson.filter((p) => !imageExts.includes(p.split('.').pop()?.toLowerCase() || ''));
+                          const previewCount = Math.min(imagePaths.length, 3);
+                          const overflowCount = imagePaths.length - previewCount;
+                          return (
+                            <div className="tw-mt-2 tw-flex tw-items-center tw-gap-2">
+                              {imagePaths.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => { setLightboxImages(imagePaths.map((p) => `file:///${p.replace(/\\/g, '/')}`)); setLightboxIndex(0); }}
+                                  className="tw-group tw-flex tw-items-center tw-gap-0 tw-cursor-pointer tw-transition-all hover:tw-gap-1"
+                                  title={`查看 ${imagePaths.length} 张图片`}
+                                >
+                                  {imagePaths.slice(0, previewCount).map((p, i) => (
+                                    <div
+                                      key={p}
+                                      className="tw-relative tw-w-10 tw-h-10 tw-rounded-lg tw-overflow-hidden tw-border-2 tw-border-white tw-shadow-sm tw-transition-transform group-hover:tw-scale-105"
+                                      style={{ marginLeft: i === 0 ? 0 : '-8px', zIndex: previewCount - i }}
+                                    >
+                                      <img src={`file:///${p.replace(/\\/g, '/')}`} alt="" className="tw-w-full tw-h-full tw-object-cover" />
+                                    </div>
+                                  ))}
+                                  {overflowCount > 0 && (
+                                    <div className="tw-relative tw-flex tw-items-center tw-justify-center tw-w-10 tw-h-10 tw-rounded-lg tw-bg-slate-100 tw-border-2 tw-border-white tw-shadow-sm tw-text-[11px] tw-font-black tw-text-slate-500" style={{ marginLeft: '-8px', zIndex: 0 }}>
+                                      +{overflowCount}
+                                    </div>
+                                  )}
+                                  <span className="tw-ml-1.5 tw-text-[11px] tw-font-bold tw-text-slate-400 group-hover:tw-text-slate-600 tw-transition-colors tw-flex tw-items-center tw-gap-1">
+                                    <ImageIcon size={12} />
+                                    {imagePaths.length}
+                                  </span>
+                                </button>
+                              )}
+                              {nonImagePaths.map((path) => (
+                                <span key={path} className="tw-rounded-full tw-bg-slate-100 tw-px-2 tw-py-0.5 tw-text-[9px] tw-font-bold tw-text-slate-500 tw-border tw-border-slate-200 tw-truncate tw-max-w-[100px]" title={path}>
+                                  {path.split(/[\\/]/).pop()}
+                                </span>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="tw-px-3 tw-py-4 tw-align-top">
                         <div className="tw-flex tw-flex-col tw-gap-2">
@@ -642,6 +716,39 @@ export function HotBaziPage() {
                   {workflows.map((wf) => <option key={wf.code} value={wf.code}>{wf.name}</option>)}
                   {workflows.length === 0 && <option value="">无可用栏目</option>}
                 </select>
+              </label>
+              <label className="tw-block tw-col-span-full">
+                <div className="tw-mb-2 tw-text-sm tw-font-bold tw-text-slate-700">媒体资产存储路径</div>
+                <div className="tw-flex tw-gap-2">
+                  <input
+                    type="text"
+                    value={configDraft.mediaDir}
+                    onChange={(event) => setConfigDraft((current) => ({ ...current, mediaDir: event.target.value }))}
+                    placeholder="留空则使用默认路径 (项目根目录/media_assets/hot_bazi)"
+                    className="tw-flex-1 tw-rounded-xl tw-border tw-border-slate-200 tw-bg-slate-50 tw-px-4 tw-py-3 tw-text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const dir = await appApi.media.selectDirectory(configDraft.mediaDir);
+                        if (dir) {
+                          setConfigDraft((current) => ({ ...current, mediaDir: dir }));
+                        }
+                      } catch (err) {
+                        console.error('Failed to select directory:', err);
+                        alert('无法打开目录选择器，请检查应用权限或手动输入路径。');
+                      }
+                    }}
+                    className="tw-inline-flex tw-items-center tw-justify-center tw-px-4 tw-rounded-xl tw-border tw-border-slate-200 tw-bg-white tw-text-slate-600 hover:tw-bg-slate-50 tw-transition-colors"
+                    title="选择文件夹"
+                  >
+                    <FolderOpen size={18} />
+                  </button>
+                </div>
+                <p className="tw-mt-1.5 tw-text-[11px] tw-text-slate-400 tw-font-medium">
+                  所有生成的图片、抓图、排盘截图将保存至此。支持绝对路径。
+                </p>
               </label>
             </div>
             <div className="tw-mt-5 tw-flex tw-flex-col tw-gap-3 sm:tw-flex-row sm:tw-items-center sm:tw-justify-between">
@@ -771,6 +878,87 @@ export function HotBaziPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ===== Lightbox 全屏大图预览 ===== */}
+      {lightboxImages.length > 0 && (
+        <div
+          className="tw-fixed tw-inset-0 tw-z-[200] tw-flex tw-items-center tw-justify-center tw-bg-black/80 tw-backdrop-blur-md tw-animate-in tw-fade-in tw-duration-200"
+          onClick={() => setLightboxImages([])}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setLightboxImages([]);
+            if (e.key === 'ArrowLeft') setLightboxIndex((i) => (i - 1 + lightboxImages.length) % lightboxImages.length);
+            if (e.key === 'ArrowRight') setLightboxIndex((i) => (i + 1) % lightboxImages.length);
+          }}
+          tabIndex={0}
+          role="dialog"
+          aria-label="图片预览"
+        >
+          {/* 关闭按钮 */}
+          <button
+            type="button"
+            onClick={() => setLightboxImages([])}
+            className="tw-absolute tw-top-6 tw-right-6 tw-z-10 tw-p-2 tw-rounded-full tw-bg-white/10 tw-text-white/80 hover:tw-bg-white/20 hover:tw-text-white tw-transition-all tw-backdrop-blur-sm"
+          >
+            <X size={20} />
+          </button>
+
+          {/* 图片计数 */}
+          <div className="tw-absolute tw-top-6 tw-left-1/2 tw--translate-x-1/2 tw-z-10 tw-px-4 tw-py-1.5 tw-rounded-full tw-bg-white/10 tw-backdrop-blur-sm tw-text-white/80 tw-text-xs tw-font-bold">
+            {lightboxIndex + 1} / {lightboxImages.length}
+          </div>
+
+          {/* 左箭头 */}
+          {lightboxImages.length > 1 && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setLightboxIndex((i) => (i - 1 + lightboxImages.length) % lightboxImages.length); }}
+              className="tw-absolute tw-left-4 tw-z-10 tw-p-3 tw-rounded-full tw-bg-white/10 tw-text-white/80 hover:tw-bg-white/20 hover:tw-text-white tw-transition-all tw-backdrop-blur-sm"
+            >
+              <ChevronLeft size={24} />
+            </button>
+          )}
+
+          {/* 主图 */}
+          <img
+            src={lightboxImages[lightboxIndex]}
+            alt={`预览图 ${lightboxIndex + 1}`}
+            className="tw-max-w-[90vw] tw-max-h-[85vh] tw-object-contain tw-rounded-2xl tw-shadow-2xl tw-select-none"
+            onClick={(e) => e.stopPropagation()}
+            draggable={false}
+          />
+
+          {/* 右箭头 */}
+          {lightboxImages.length > 1 && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setLightboxIndex((i) => (i + 1) % lightboxImages.length); }}
+              className="tw-absolute tw-right-4 tw-z-10 tw-p-3 tw-rounded-full tw-bg-white/10 tw-text-white/80 hover:tw-bg-white/20 hover:tw-text-white tw-transition-all tw-backdrop-blur-sm"
+            >
+              <ChevronRight size={24} />
+            </button>
+          )}
+
+          {/* 底部缩略图导航条 */}
+          {lightboxImages.length > 1 && (
+            <div className="tw-absolute tw-bottom-6 tw-left-1/2 tw--translate-x-1/2 tw-flex tw-items-center tw-gap-2 tw-px-4 tw-py-2 tw-rounded-2xl tw-bg-white/10 tw-backdrop-blur-sm">
+              {lightboxImages.map((src, i) => (
+                <button
+                  key={src}
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setLightboxIndex(i); }}
+                  className={`tw-w-12 tw-h-12 tw-rounded-lg tw-overflow-hidden tw-border-2 tw-transition-all tw-cursor-pointer ${
+                    i === lightboxIndex
+                      ? 'tw-border-white tw-shadow-lg tw-scale-110'
+                      : 'tw-border-white/30 tw-opacity-60 hover:tw-opacity-100'
+                  }`}
+                >
+                  <img src={src} alt="" className="tw-w-full tw-h-full tw-object-cover" />
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

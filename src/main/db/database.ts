@@ -2300,6 +2300,10 @@ export async function createDatabase(filename: string) {
       list(limit = 200): HotPerson[] {
         return select('SELECT * FROM hot_people ORDER BY updateTime DESC, id DESC LIMIT ?', [limit]).map(mapHotPerson);
       },
+      findById(id: number): HotPerson | null {
+        const row = sqlite.prepare('SELECT * FROM hot_people WHERE id = ?').get(id);
+        return row ? mapHotPerson(row as Record<string, unknown>) : null;
+      },
       findByName(name: string): HotPerson | null {
         const row = sqlite.prepare('SELECT * FROM hot_people WHERE name = ? ORDER BY updateTime DESC LIMIT 1').get(name);
         return row ? mapHotPerson(row as Record<string, unknown>) : null;
@@ -2710,6 +2714,7 @@ export interface AppDatabase {
   hotPeople: {
     upsert(input: UpsertHotPersonInput): HotPerson;
     list(limit?: number): HotPerson[];
+    findById(id: number): HotPerson | null;
     findByName(name: string): HotPerson | null;
     deleteAll(): number;
     deleteToday(): number;

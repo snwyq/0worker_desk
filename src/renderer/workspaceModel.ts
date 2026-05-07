@@ -8,7 +8,8 @@ export type WorkspaceModule =
   | 'hot-topics'
   | 'hot-people'
   | 'hot-bazi'
-  | 'settings';
+  | 'settings'
+  | 'export-bazi-chart';
 
 export interface WorkspaceTab {
   id: string;
@@ -90,11 +91,22 @@ export const moduleTabs: Record<WorkspaceModule, WorkspaceTab> = {
 };
 
 export function createInitialWorkspace(): WorkspaceState {
-  const homeTab = moduleTabs.home;
+  let initialTab = moduleTabs.home;
+  
+  if (typeof window !== 'undefined' && window.location.hash.includes('/export/bazi-chart')) {
+    initialTab = {
+      id: 'export-bazi-chart',
+      module: 'export-bazi-chart',
+      title: 'Bazi Export',
+      subtitle: '',
+      pinned: true,
+    };
+  }
+
   return {
-    activeModule: homeTab.module,
-    activeTabId: homeTab.id,
-    tabs: [homeTab],
+    activeModule: initialTab.module,
+    activeTabId: initialTab.id,
+    tabs: [initialTab],
   };
 }
 

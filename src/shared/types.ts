@@ -573,6 +573,7 @@ export interface GenerateHotBaziBatchInput {
   promptTemplate?: string;
   model?: 'qwen3.5-plus' | 'deepseek-v3.2' | 'kimi-k2.5';
   limit?: number;
+  mediaDir?: string;
 }
 
 export interface GenerateHotBaziBatchResult {

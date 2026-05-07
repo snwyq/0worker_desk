@@ -147,6 +147,15 @@ export const appApi = {
       }
       return httpJson<string[]>('/media/select-files', { method: 'POST' });
     },
+    selectDirectory: async (defaultPath?: string): Promise<string> => {
+      if (window.weiboPublisher?.media?.selectDirectory) {
+        return window.weiboPublisher.media.selectDirectory(defaultPath);
+      }
+      return httpJson<string>('/media/select-directory', {
+        method: 'POST',
+        body: JSON.stringify({ defaultPath }),
+      });
+    },
   },
   settings: {
     list: (): Promise<AppSetting[]> => {
@@ -629,13 +638,22 @@ export const appApi = {
         body: JSON.stringify(input),
       });
     },
-    generateHotBaziBatch: (input: GenerateHotBaziBatchInput): Promise<GenerateHotBaziBatchResult> => {
+    generateHotBaziBatch: async (input: GenerateHotBaziBatchInput): Promise<GenerateHotBaziBatchResult> => {
       if (window.weiboPublisher?.ai?.generateHotBaziBatch) {
         return window.weiboPublisher.ai.generateHotBaziBatch(input);
       }
       return httpJson<GenerateHotBaziBatchResult>('/ai/hot-bazi/generate-batch', {
         method: 'POST',
         body: JSON.stringify(input),
+      });
+    },
+    regenerateHotBaziMedia: async (taskIds: number[], mediaDir?: string): Promise<{ successCount: number; totalRequested: number }> => {
+      if (window.weiboPublisher?.ai?.regenerateHotBaziMedia) {
+        return window.weiboPublisher.ai.regenerateHotBaziMedia(taskIds, mediaDir);
+      }
+      return httpJson<{ successCount: number; totalRequested: number }>('/ai/hot-bazi/regenerate-media', {
+        method: 'POST',
+        body: JSON.stringify({ taskIds, mediaDir }),
       });
     },
     previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any): Promise<{ runId: string }> => {

@@ -23,6 +23,7 @@ import { AgentEnginePage } from './pages/AgentEnginePage';
 import { HotTopicsPage } from './pages/HotTopicsPage';
 import { HotPeoplePage } from './pages/HotPeoplePage';
 import { HotBaziPage } from './pages/HotBaziPage';
+import { BaziChartExportPage } from './pages/export/BaziChartExportPage';
 
 import {
   createInitialWorkspace,
@@ -97,9 +98,15 @@ export function App() {
       case 'hot-people': return <HotPeoplePage onOpenHotTopics={() => openModule('hot-topics')} />;
       case 'hot-bazi': return <HotBaziPage />;
       case 'settings': return <SettingsPage />;
+      case 'export-bazi-chart': return <BaziChartExportPage />;
       default: return <HomePage />;
     }
   };
+
+  // 🔴 关键修复：如果是导出页面，直接渲染，不包裹 Layout 框架
+  if (activeModule === 'export-bazi-chart') {
+    return <BaziChartExportPage />;
+  }
 
   return (
     <div className="tw-flex tw-h-screen tw-bg-[#f8fafc] tw-text-slate-900 tw-font-sans">

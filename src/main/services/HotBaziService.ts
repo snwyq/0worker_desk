@@ -3,6 +3,11 @@ import type { GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotPerson }
 import { Solar } from 'lunar-typescript';
 import { AiService } from './AiService.js';
 import { SchedulingEngine } from '../core/workflow/SchedulingEngine.js';
+import { imageScraperService } from './ImageScraperService.js';
+import { localChartRenderer } from './LocalChartRenderer.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import { app } from 'electron';
 
 function toSourceTopic(person: HotPerson) {
   return String(person.sourceTopicTitle || person.name || '').trim();
@@ -66,6 +71,44 @@ export class HotBaziService {
   init(db: AppDatabase) {
     this.db = db;
     this.ai.init(db);
+    // 启动时清理 7 天前的媒体资产
+    this.cleanupOldMediaAssets().catch(console.error);
+  }
+
+  static getMediaDir(customPath?: string) {
+    if (customPath) {
+      return customPath;
+    }
+    // 优先从环境变量获取，方便参数化
+    if (process.env.HOT_BAZI_MEDIA_DIR) {
+      return process.env.HOT_BAZI_MEDIA_DIR;
+    }
+    // 默认指向项目执行目录下的 media_assets/hot_bazi
+    return path.join(process.cwd(), 'media_assets', 'hot_bazi');
+  }
+
+  private async cleanupOldMediaAssets() {
+    try {
+      const targetDir = HotBaziService.getMediaDir();
+      if (!fs.existsSync(targetDir)) return;
+      const files = fs.readdirSync(targetDir);
+      const now = Date.now();
+      const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+      let deleted = 0;
+      for (const file of files) {
+        const filePath = path.join(targetDir, file);
+        const stats = fs.statSync(filePath);
+        if (now - stats.mtimeMs > SEVEN_DAYS_MS) {
+          fs.unlinkSync(filePath);
+          deleted++;
+        }
+      }
+      if (deleted > 0) {
+        console.log(`Cleaned up ${deleted} expired media assets from hot_bazi.`);
+      }
+    } catch (e) {
+      console.error('Failed to cleanup old media assets:', e);
+    }
   }
 
   async generateBatch(input: GenerateHotBaziBatchInput): Promise<GenerateHotBaziBatchResult> {
@@ -94,6 +137,7 @@ export class HotBaziService {
 
     const promptTemplate = String(input.promptTemplate || '').trim() || getDefaultPromptTemplate();
     const model = input.model || 'deepseek-v3.2';
+    const mediaDir = input.mediaDir;
     const result: GenerateHotBaziBatchResult = {
       createdContents: 0,
       createdReviews: 0,
@@ -125,6 +169,23 @@ export class HotBaziService {
 
         const itemMediaPaths: string[] = [];
         const generatedAt = new Date().toISOString();
+
+        try {
+          const scrapedPhotos = await imageScraperService.scrapeImages(person.name, 2, mediaDir);
+          itemMediaPaths.push(...scrapedPhotos);
+        } catch (e) {
+          console.error(`Failed to scrape images for ${person.name}:`, e);
+        }
+
+        try {
+          const generatedCharts = await localChartRenderer.renderBaziCharts(person, {
+            chartAnalysis: '命理格局',
+            luckAnalysis: '大运流年断语'
+          }, mediaDir);
+          itemMediaPaths.push(...generatedCharts);
+        } catch (e) {
+          console.error(`Failed to render charts for ${person.name}:`, e);
+        }
 
         const content = this.db.contentItems.create({
           title: `${person.name} 热点八字`,
@@ -181,6 +242,55 @@ export class HotBaziService {
     }
 
     return result;
+  }
+  async regenerateMediaForTasks(taskIds: number[], mediaDir?: string) {
+    if (!this.db) {
+      throw new Error('HOT_BAZI_DB_NOT_READY');
+    }
+
+    const tasks = this.db.hotBaziTasks.list().filter((t: any) => taskIds.includes(t.id));
+    let successCount = 0;
+
+    for (const task of tasks) {
+      if (!task.hotPersonId) continue;
+      const person = this.db.hotPeople.findById(task.hotPersonId);
+      if (!person) continue;
+
+      const itemMediaPaths: string[] = [];
+      try {
+        const scrapedPhotos = await imageScraperService.scrapeImages(person.name, 2, mediaDir);
+        itemMediaPaths.push(...scrapedPhotos);
+      } catch (e) {
+        console.error(`Failed to scrape images for ${person.name}:`, e);
+      }
+
+      const contentItem = this.db.contentItems.findById(task.contentId);
+      const generatedContent = contentItem?.sourceJson || {
+        chartAnalysis: '命理格局解析',
+        luckAnalysis: '流年断语参考'
+      };
+
+      try {
+        const generatedCharts = await localChartRenderer.renderBaziCharts(person, generatedContent, mediaDir);
+        itemMediaPaths.push(...generatedCharts);
+      } catch (e) {
+        console.error(`Failed to render charts for ${person.name}:`, e);
+      }
+
+      if (itemMediaPaths.length > 0) {
+        this.db.hotBaziTasks.update(task.id, {
+          ...task,
+          mediaPathsJson: itemMediaPaths,
+          status: 'draft' // Reset to draft if it was in error, etc.
+        });
+        successCount++;
+      }
+    }
+
+    return {
+      successCount,
+      totalRequested: taskIds.length
+    };
   }
 }
 

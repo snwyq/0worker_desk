@@ -62,7 +62,10 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/ws": "^8.18.1",
     "better-sqlite3": "^12.9.0",
+    "crypto-js": "^4.2.0",
+    "dayjs": "^1.11.20",
     "dotenv": "^16.4.5",
+    "echarts": "^6.0.0",
     "electron-updater": "^6.8.3",
     "i18next": "^26.0.8",
     "lucide-react": "^0.468.0",
@@ -72,9 +75,11 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-i18next": "^17.0.6",
+    "react-router-dom": "^7.15.0",
     "ws": "^8.20.0"
   },
   "devDependencies": {
+    "@types/crypto-js": "^4.2.2",
     "@types/node": "^20.12.12",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",

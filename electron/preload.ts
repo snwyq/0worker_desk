@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
   },
   media: {
     selectFiles: () => ipcRenderer.invoke('media:selectFiles'),
+    selectDirectory: (defaultPath?: string) => ipcRenderer.invoke('media:selectDirectory', defaultPath),
   },
   settings: {
     list: () => ipcRenderer.invoke('settings:list'),
@@ -112,6 +113,7 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
     resetHotPeopleAnalysis: () => ipcRenderer.invoke('ai:resetHotPeopleAnalysis'),
     analyzeHotPeople: (input?: AnalyzeHotPeopleInput) => ipcRenderer.invoke('ai:analyzeHotPeople', input),
     generateHotBaziBatch: (input: GenerateHotBaziBatchInput) => ipcRenderer.invoke('ai:generateHotBaziBatch', input),
+    regenerateHotBaziMedia: (taskIds: number[], mediaDir?: string) => ipcRenderer.invoke('ai:regenerateHotBaziMedia', taskIds, mediaDir),
     previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any) => ipcRenderer.invoke('ai:previewWorkflow_v3', pluginCode, workflowCode, inputParams),
     startAgentSchedule: (accountId: number) => ipcRenderer.invoke('ai:startAgentSchedule', accountId),
     onWorkflowLog: (callback: any) => {

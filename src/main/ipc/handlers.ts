@@ -26,7 +26,7 @@ const { app, BrowserWindow, dialog, ipcMain } = electron;
 
 async function selectMediaFiles() {
   const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-  const options: Electron.OpenDialogOptions = {
+  const options: electron.OpenDialogOptions = {
     title: 'Select media files',
     properties: ['openFile', 'multiSelections'],
     filters: [
@@ -38,6 +38,21 @@ async function selectMediaFiles() {
   const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
 
   return result.canceled ? [] : result.filePaths;
+}
+
+async function selectDirectory(defaultPath?: string) {
+  try {
+    const options: electron.OpenDialogOptions = {
+      title: '选择存储目录',
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: defaultPath && defaultPath.trim() ? defaultPath : process.cwd(),
+    };
+    const result = await dialog.showOpenDialog(options);
+    return result.canceled ? '' : result.filePaths[0];
+  } catch (e) {
+    console.error('Select directory failed:', e);
+    return '';
+  }
 }
 
 async function testAccountConnection(repositories: AppDatabase, accountId: number): Promise<ConnectionTestResult> {
@@ -332,6 +347,7 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   }));
   ipcMain.handle('accounts:testConnection', (_event, accountId: number) => testAccountConnection(repositories, accountId));
   ipcMain.handle('media:selectFiles', () => selectMediaFiles());
+  ipcMain.handle('media:selectDirectory', (_event, defaultPath?: string) => selectDirectory(defaultPath));
   ipcMain.handle('scheduler:start', () => scheduler.start());
   ipcMain.handle('scheduler:stop', () => scheduler.stop());
   ipcMain.handle('scheduler:status', () => scheduler.getStatus());
@@ -426,6 +442,7 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   }));
   ipcMain.handle('ai:analyzeHotPeople', (_event, input?: AnalyzeHotPeopleInput) => hotPeopleService.analyzePendingHotTopics(input));
   ipcMain.handle('ai:generateHotBaziBatch', (_event, input: GenerateHotBaziBatchInput) => hotBaziService.generateBatch(input));
+  ipcMain.handle('ai:regenerateHotBaziMedia', (_event, taskIds: number[], mediaDir?: string) => hotBaziService.regenerateMediaForTasks(taskIds, mediaDir));
   ipcMain.handle('ai:startAgentSchedule', async (_event, accountId: number) => {
     // In production, this would register a node-cron job or an interval.
     return { ok: true, message: `Scheduled agent for account ${accountId}` };
@@ -610,6 +627,13 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
   hotBaziService.init(repositories);
   const server = http.createServer(async (request, response) => {
     try {
+      if (request.method === 'POST' && request.url === '/media/select-directory') {
+        const body = await readBody(request) as { defaultPath?: string };
+        const path = await selectDirectory(body.defaultPath);
+        sendJson(request, response, 200, path);
+        return;
+      }
+
       if (request.method === 'OPTIONS') {
         sendJson(request, response, 204, {});
         return;
@@ -1050,6 +1074,12 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
       if (request.method === 'POST' && requestUrl.pathname === '/ai/hot-bazi/generate-batch') {
         const input = await readBody(request) as GenerateHotBaziBatchInput;
         sendJson(request, response, 200, await hotBaziService.generateBatch(input));
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/ai/hot-bazi/regenerate-media') {
+        const input = await readBody(request) as { taskIds: number[], mediaDir?: string };
+        sendJson(request, response, 200, await hotBaziService.regenerateMediaForTasks(input.taskIds, input.mediaDir));
         return;
       }
 
