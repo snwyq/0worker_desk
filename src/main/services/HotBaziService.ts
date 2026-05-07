@@ -177,10 +177,14 @@ export class HotBaziService {
           console.error(`Failed to scrape images for ${person.name}:`, e);
         }
 
+        const paragraphs = body.split('\\n').map(p => p.trim()).filter(p => p.length > 0 && !p.startsWith('#'));
+        const chartAnalysis = paragraphs[0] || '命理格局提取失败';
+        const luckAnalysis = paragraphs[paragraphs.length - 1] || '流年断语提取失败';
+
         try {
           const generatedCharts = await localChartRenderer.renderBaziCharts(person, {
-            chartAnalysis: '命理格局',
-            luckAnalysis: '大运流年断语'
+            chartAnalysis,
+            luckAnalysis
           }, mediaDir);
           itemMediaPaths.push(...generatedCharts);
         } catch (e) {
@@ -265,13 +269,15 @@ export class HotBaziService {
       }
 
       const contentItem = this.db.contentItems.findById(task.contentId);
-      const generatedContent = contentItem?.sourceJson || {
-        chartAnalysis: '命理格局解析',
-        luckAnalysis: '流年断语参考'
+      const body = contentItem?.body || '';
+      const paragraphs = body.split('\\n').map((p: string) => p.trim()).filter((p: string) => p.length > 0 && !p.startsWith('#'));
+      const generatedContentObj = {
+        chartAnalysis: paragraphs[0] || '命理格局解析',
+        luckAnalysis: paragraphs[paragraphs.length - 1] || '流年断语参考'
       };
 
       try {
-        const generatedCharts = await localChartRenderer.renderBaziCharts(person, generatedContent, mediaDir);
+        const generatedCharts = await localChartRenderer.renderBaziCharts(person, generatedContentObj, mediaDir);
         itemMediaPaths.push(...generatedCharts);
       } catch (e) {
         console.error(`Failed to render charts for ${person.name}:`, e);

@@ -242,7 +242,8 @@ export function extractAndPaipan(text: string, person: any, generatedContent: an
     return res;
   };
 
-  const daYunRaw = bazi.getYun(person.gender === '女' ? 0 : 1).getDaYun();
+  const isFemale = person.gender === '女' || person.gender === 0 || person.gender === '0';
+  const daYunRaw = bazi.getYun(isFemale ? 0 : 1).getDaYun();
   const daYunList = daYunRaw.map((dy: any) => {
     const gz = dy.getGanZhi() || '';
     const gan = gz.charAt(0);
