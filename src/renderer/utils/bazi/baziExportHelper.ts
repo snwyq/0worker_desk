@@ -392,6 +392,7 @@ export function extractAndPaipan(text: string, person: any, generatedContent: an
     surname: (person.name || '某').charAt(0),
     fullName: person.name || '某某',
     identity: person.sourceTopicTitle || '热点人物',
+    gender: person.gender,
     dateStr: `${y}年${m}月${d}日`,
     allPillars,
     baziExtra,
