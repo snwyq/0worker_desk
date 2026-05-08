@@ -441,7 +441,12 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
     reset: repositories.hotTopicAnalysis.resetToday(),
   }));
   ipcMain.handle('ai:analyzeHotPeople', (_event, input?: AnalyzeHotPeopleInput) => hotPeopleService.analyzePendingHotTopics(input));
-  ipcMain.handle('ai:generateHotBaziBatch', (_event, input: GenerateHotBaziBatchInput) => hotBaziService.generateBatch(input));
+  ipcMain.handle('ai:listTodayTopicPeople', () => repositories.hotTopicAnalysis.listTodayCompletedWithPeople());
+  ipcMain.handle('ai:generateHotBaziBatch', (event, input: GenerateHotBaziBatchInput) => {
+    return hotBaziService.generateBatch(input, (progress) => {
+      try { event.sender.send('hot-bazi:progress', progress); } catch { /* window may have closed */ }
+    });
+  });
   ipcMain.handle('ai:regenerateHotBaziMedia', (_event, taskIds: number[], mediaDir?: string) => hotBaziService.regenerateMediaForTasks(taskIds, mediaDir));
   ipcMain.handle('ai:startAgentSchedule', async (_event, accountId: number) => {
     // In production, this would register a node-cron job or an interval.
@@ -1068,6 +1073,11 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
       if (request.method === 'POST' && requestUrl.pathname === '/ai/hot-people/analyze') {
         const input = await readBody(request) as AnalyzeHotPeopleInput;
         sendJson(request, response, 200, await hotPeopleService.analyzePendingHotTopics(input));
+        return;
+      }
+
+      if (request.method === 'GET' && requestUrl.pathname === '/ai/today-topic-people') {
+        sendJson(request, response, 200, repositories.hotTopicAnalysis.listTodayCompletedWithPeople());
         return;
       }
 

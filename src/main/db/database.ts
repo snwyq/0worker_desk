@@ -42,6 +42,7 @@ import type {
   UpsertHotPersonInput,
   CreateHotBaziTaskInput,
   UpdateHotBaziTaskInput,
+  TopicPersonPair,
 } from '../../shared/types.js';
 
 function now() {
@@ -56,6 +57,35 @@ function parseJsonObject(value: unknown): Record<string, unknown> {
 function parseJsonArray<T = unknown>(value: unknown): T[] {
   const parsed = JSON.parse(String(value || '[]')) as unknown;
   return Array.isArray(parsed) ? parsed as T[] : [];
+}
+
+/** 从热点记录中统一提取热度原始值（优先级：hotValue > hot_value > extra） */
+function resolveHotValueRaw(row: any): string {
+  const v1 = String(row.hotValue ?? '').trim();
+  if (v1) return v1;
+  const v2 = String(row.hotValue2 ?? row.hot_value ?? '').trim();
+  if (v2) return v2;
+  const extra = String(row.extra ?? '').trim();
+  if (!extra) return '';
+  try {
+    const obj = JSON.parse(extra);
+    return String(obj.hot || obj.hotValue || obj.hot_value || obj.heat || '').trim();
+  } catch {
+    const match = extra.match(/([\d.]+[万亿]?)/);
+    return match?.[1] || '';
+  }
+}
+
+/** 将热度文本转为纯数字（支持 "234万"、"1.5亿"、纯数字） */
+function parseHotValue(raw: string): number {
+  if (!raw) return 0;
+  const cleaned = raw.replace(/[,，\s]/g, '');
+  const wanMatch = cleaned.match(/([\d.]+)\s*万/);
+  if (wanMatch) return Math.round(parseFloat(wanMatch[1]) * 10000);
+  const yiMatch = cleaned.match(/([\d.]+)\s*亿/);
+  if (yiMatch) return Math.round(parseFloat(yiMatch[1]) * 100000000);
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : Math.round(num);
 }
 
 function mapAccount(row: Record<string, unknown>): Account {
@@ -2232,6 +2262,69 @@ export async function createDatabase(filename: string) {
         `).run(timestamp, todayStart.toISOString(), tomorrowStart.toISOString());
         return Number(result.changes ?? 0);
       },
+      listTodayCompletedWithPeople(): TopicPersonPair[] {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const tomorrowStart = new Date(todayStart);
+        tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+
+        // 批量取出所有已完成的人物，建 Map（避免逐个查 DB）
+        const allPeople = select(
+          `SELECT * FROM hot_people WHERE analysisStatus = 'completed' AND birthday != ''`,
+        ).map(mapHotPerson);
+        const peopleMap = new Map(allPeople.map((p: HotPerson) => [p.name, p]));
+
+        // 查今日已完成分析且有提取到人物的热点条目
+        const rows = select(`
+          SELECT
+            a.id AS analysisId,
+            a.hotTopicId,
+            a.extractedNamesJson,
+            h.title AS topicTitle,
+            h.platform AS topicPlatform,
+            h.hotValue,
+            h.hot_value AS hotValue2,
+            h.extra,
+            h.rank
+          FROM hot_topic_analysis a
+          INNER JOIN hot_topics_history h ON h.id = a.hotTopicId
+          WHERE a.status = 'completed'
+            AND a.extractedNamesJson != '[]'
+            AND h.createdAt >= ? AND h.createdAt < ?
+          ORDER BY h.id DESC
+        `, [todayStart.toISOString(), tomorrowStart.toISOString()]);
+
+        const pairs: TopicPersonPair[] = [];
+        for (const row of rows) {
+          let names: string[] = [];
+          try {
+            names = JSON.parse(String(row.extractedNamesJson || '[]'));
+          } catch { /* ignore */ }
+          const rawHot = resolveHotValueRaw(row);
+          const hotNum = parseHotValue(rawHot);
+          for (const name of names) {
+            const person = peopleMap.get(name);
+            if (!person) continue;
+            pairs.push({
+              analysisId: Number(row.analysisId),
+              hotTopicId: Number(row.hotTopicId),
+              topicTitle: String(row.topicTitle ?? ''),
+              topicPlatform: String(row.topicPlatform ?? ''),
+              hotValue: rawHot,
+              hotValueNum: hotNum,
+              personName: person.name,
+              personId: person.id,
+              birthday: person.birthday,
+              sizhu: person.sizhu,
+              gender: person.gender,
+            });
+          }
+        }
+
+        // 按热度降序排序
+        pairs.sort((a, b) => b.hotValueNum - a.hotValueNum);
+        return pairs;
+      },
     },
     hotPeople: {
       upsert(input: UpsertHotPersonInput): HotPerson {
@@ -2710,6 +2803,7 @@ export interface AppDatabase {
     listFailed(limit?: number): any[];
     resetAll(): number;
     resetToday(): number;
+    listTodayCompletedWithPeople(): TopicPersonPair[];
   };
   hotPeople: {
     upsert(input: UpsertHotPersonInput): HotPerson;

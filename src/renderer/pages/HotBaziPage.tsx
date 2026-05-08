@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, ChevronLeft, ChevronRight, Copy, FolderOpen, Image as ImageIcon, Loader2, Pencil, Send, Settings2, Sparkles, Trash2, X } from 'lucide-react';
+import { CalendarClock, ChevronLeft, ChevronRight, Copy, Flame, FolderOpen, Image as ImageIcon, Loader2, Pencil, Send, Settings2, Sparkles, Trash2, X } from 'lucide-react';
 import { appApi } from '../api';
-import type { Account, HotBaziTask, HotPerson, AiWorkflow } from '../../shared/types';
+import { useHotBaziPipeline } from '../hooks/useHotBaziPipeline';
+import type { Account, HotBaziTask, HotPerson, AiWorkflow, TopicPersonPair } from '../../shared/types';
 
 const batchSizeOptions = [
   { value: '2', label: '2 条' },
@@ -62,45 +63,51 @@ function readRunState(): HotBaziRunState {
 }
 
 const defaultPromptTemplate = [
-  '请扮演一位铁口直断的高级八字命理专家，根据以下资料撰写一篇人物八字短评。',
+  '请扮演一位拥有二十年实战经验、铁口直断的高级命理师。请根据以下资料，撰写一篇用词犀利、极具宿命感的人物八字短评。',
   '',
   '【输入资料】',
   '人物：{{personName}}',
   '生日：{{birthday}}',
   '八字：{{sizhu}}',
   '大运：{{dayunInfo}}',
-  '热点：{{sourceTopic}}',
+  '话题标签：{{sourceTopic}}',
   '',
-  '【全局要求】',
-  '行文风格：铁口直断，专业犀利，干脆利落，理出有据。',
-  '字数限制：总字数严格控制在300字以内，拒绝废话。',
-  '格式禁忌：除首行话题标签外，正文绝对禁止使用任何 Markdown 格式（如加粗、星号、列表符等），仅保留自然换行。',
-  '内容导向：命理分析必须与该人物已知的真实经历、人生轨迹紧密咬合。',
-  '流年要求：当前要分析的流年年份是{{currentYear}}年（{{currentYearGanzhi}}），下一年是{{nextYear}}年（{{nextYearGanzhi}}），不要擅自改写成年份或干支。',
+  '【全局铁律】',
+  '1. 独立论命，绝不迎合：正文完全独立进行命理推断与运势分析，【绝对禁止】在正文中生搬硬套、牵强附会地去解释“话题标签”的内容。保持命理师的高冷与客观。',
+  '2. 禁绝幻觉：必须结合该人物已知的真实经历。如果对部分经历不确定，请用宏观的运势起伏（如“必生波折”、“得贵人提携”）来替代，严禁凭空捏造未曾发生的具体事件。',
+  '3. 行文风格：一针见血，干脆利落。多用带有宿命感的短句与四字词（如：水大木漂、岁运并临、贪财坏印等），带出专业压迫感。',
+  '4. 格式与字数：总字数严格控制在300字以内，拒绝废话。除首行话题标签外，正文绝对禁止使用任何 Markdown 格式（如加粗、星号等），仅保留自然换行。',
+  '5. 严守流年：当前流年为{{currentYear}}年（{{currentYearGanzhi}}），下一年为{{nextYear}}年（{{nextYearGanzhi}}），禁止篡改。',
   '',
-  '【严格文章结构】',
+  '【严密的文章结构】',
   '第一行（独占一行）：#{{sourceTopic}}#',
   '',
-  '第一段（约60字，格局定位）：首句必须直接写出“{{personName}}”的名字。随后简明扼要地给出其八字排盘、格局定性及五行喜忌分析。',
+  '第一段（定调与格局，约70字）：首句必须直呼“{{personName}}”其名，然后一两句话写这个人的重要的年份和经历简介，接着写出“公开资料显示其生日是{{birthday}}，八字为{{sizhu}}”，然后用一句话下定论（如“这是典型的xx之命”），接着简练点出其八字核心格局及最致命的喜忌。',
   '',
-  '第二段（大运与真实经历对应，重点段落）：',
-  '要求：短句为主，不要把分析和经历混在超长句中；真实经历的字数必须多于命理分析。',
-  '阶段一：先写1句重点大运或年份的命理判断，紧接2到3句其在该阶段真实的经历变化。',
-  '阶段二：必须换行另起，再写1句下一步大运的命理判断，紧接1到2句对应的真实经历。',
+  '第二段（约150字，大运复盘，流年分析，必须分层写，一句一行，大运或年份起头）：',
+  '要求：短句为主，真实经历的字数必须多于命理分析。',
+  '阶段一：先写1句重点大运或年份的干支作用，紧接其在该阶段真实的经历变化。',
+  '阶段二：换行另起，写1句下一步大运的命理判断，紧接对应的真实境遇变化。',
+  '如果有更多关键阶段，继续换行另起增加内容，保持相同格式。',
   '',
-  '第三段（综合论断）：整体评析大运走势，直接点明这套八字组合及运势对该人物在事业、家庭、感情、健康上的实质性影响。',
-  '',
-  '第四段（流年推断）：补充断定{{currentYear}}年（{{currentYearGanzhi}}）和{{nextYear}}年（{{nextYearGanzhi}}）的流年八字与流年的组合特点，并直言预测这两年可能发生的具体事情或特点。',
+  '第三段（综合论断与流年推断今年和明年的情况，也是一句一行，年份起头）：',
+  '专业评析流年的干支与本命局以及大运干支在这两年对其事业、感情或健康或重要事件的可能性事件与影响。',
+  '最后，直接断定{{currentYear}}年（{{currentYearGanzhi}}）与{{nextYear}}年（{{nextYearGanzhi}}）的流年走势，并直言预测这两年最明显的运势特点。',
 ].join('\n');
 
 export function HotBaziPage() {
   const storedConfig = readStoredHotBaziConfig();
+  const pipeline = useHotBaziPipeline();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [tasks, setTasks] = useState<HotBaziTask[]>([]);
+  const [topicPeople, setTopicPeople] = useState<TopicPersonPair[]>([]);
   const [activeTab, setActiveTab] = useState<'draft' | 'queued'>('draft');
   const [hotPeople, setHotPeople] = useState<HotPerson[]>([]);
+  const [autoEnqueue, setAutoEnqueue] = useState(false);
+  const [selectedPairKeys, setSelectedPairKeys] = useState<Set<string>>(new Set());
   const [workflows, setWorkflows] = useState<AiWorkflow[]>([]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<number>>(new Set());
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
   const [editingContent, setEditingContent] = useState('');
   const [editingMediaPaths, setEditingMediaPaths] = useState<string[]>([]);
@@ -122,7 +129,7 @@ export function HotBaziPage() {
   const [isSavingTaskId, setIsSavingTaskId] = useState<number | null>(null);
   const [isDeletingTaskId, setIsDeletingTaskId] = useState<number | null>(null);
   const [isEnqueueingTaskId, setIsEnqueueingTaskId] = useState<number | null>(null);
-  const [isBatchWorking, setIsBatchWorking] = useState(false);
+  const [batchWorkingType, setBatchWorkingType] = useState<'enqueue' | 'delete' | 'regenerate' | null>(null);
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [configDraft, setConfigDraft] = useState({
@@ -133,17 +140,68 @@ export function HotBaziPage() {
     mediaDir: storedConfig.mediaDir ?? '',
   });
 
+  const [isTopicModalOpen, setIsTopicModalOpen] = useState(false);
+
+  // 今日热点×人物配对展示列表（按热度排序，标注生成状态）
+  const displayList = useMemo(() => {
+    const taskMap = new Map(
+      tasks.map(t => [`${t.hotPersonId}::${t.sourceTopic}`, t])
+    );
+    return topicPeople.map(pair => ({
+      ...pair,
+      key: `${pair.personId}::${pair.topicTitle}`,
+      generated: taskMap.has(`${pair.personId}::${pair.topicTitle}`),
+      task: taskMap.get(`${pair.personId}::${pair.topicTitle}`) || null,
+    }));
+  }, [topicPeople, tasks]);
+
+  const pendingItems = displayList.filter(d => !d.generated);
+  const generatedItems = displayList.filter(d => d.generated);
+
+  // 按热点分组的数据
+  const groupedTopics = useMemo(() => {
+    const groups: Record<string, {
+      topicTitle: string;
+      topicPlatform: string;
+      hotValue: string;
+      hotValueNum: number;
+      pairs: typeof displayList;
+    }> = {};
+    
+    displayList.forEach(item => {
+      if (!groups[item.topicTitle]) {
+        groups[item.topicTitle] = {
+          topicTitle: item.topicTitle,
+          topicPlatform: item.topicPlatform,
+          hotValue: item.hotValue,
+          hotValueNum: item.hotValueNum,
+          pairs: [],
+        };
+      }
+      groups[item.topicTitle].pairs.push(item);
+    });
+    
+    return Object.values(groups).sort((a, b) => b.hotValueNum - a.hotValueNum);
+  }, [displayList]);
+
+  function formatHotValue(raw: string, num: number): string {
+    if (raw) return raw;
+    if (num >= 10000) return `${(num / 10000).toFixed(1)}万`;
+    if (num > 0) return String(num);
+    return '';
+  }
+
   async function load() {
     setIsInitialLoading(true);
     try {
-      const [nextAccounts, nextTasks, nextHotPeople, plugins] = await Promise.all([
+      const [nextAccounts, nextTasks, nextTopicPeople, nextHotPeople, plugins] = await Promise.all([
         appApi.accounts.list().catch(() => []),
         appApi.hotBaziTasks.list().catch(() => []),
+        appApi.ai.listTodayTopicPeople().catch(() => []),
         appApi.ai.listHotPeople().catch(() => []),
         appApi.ai.listPlugins().catch(() => []),
       ]);
 
-      // 获取所有 Workflow
       const allWorkflows: AiWorkflow[] = [];
       for (const plugin of plugins) {
         try {
@@ -152,15 +210,14 @@ export function HotBaziPage() {
         } catch (e) { console.error(e); }
       }
       setWorkflows(allWorkflows);
-      
       setAccounts(nextAccounts);
       setTasks(nextTasks);
+      setTopicPeople(nextTopicPeople);
       setHotPeople(nextHotPeople);
 
       if (!accountId && nextAccounts[0]) {
         setAccountId(String(nextAccounts[0].id));
       }
-      
       if (!workflowCode && allWorkflows.length > 0) {
         setWorkflowCode(allWorkflows[0].code);
       }
@@ -174,6 +231,13 @@ export function HotBaziPage() {
   useEffect(() => {
     void load();
   }, []);
+
+  // Pipeline 完成后自动刷新页面数据
+  useEffect(() => {
+    if (pipeline.state.stage === 'done' || pipeline.state.stage === 'error') {
+      void load();
+    }
+  }, [pipeline.state.stage]);
 
   useEffect(() => {
     window.localStorage.setItem(HOT_BAZI_CONFIG_STORAGE_KEY, JSON.stringify({
@@ -370,7 +434,7 @@ export function HotBaziPage() {
     if (selectedTaskIds.length === 0) return;
     try {
       setError('');
-      setIsBatchWorking(true);
+      setBatchWorkingType('delete');
       await appApi.hotBaziTasks.deleteMany(selectedTaskIds);
       setNotice(`已删除 ${selectedTaskIds.length} 条热点八字任务。`);
       setSelectedTaskIds([]);
@@ -378,7 +442,7 @@ export function HotBaziPage() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setIsBatchWorking(false);
+      setBatchWorkingType(null);
     }
   }
 
@@ -386,14 +450,14 @@ export function HotBaziPage() {
     if (selectedTaskIds.length === 0) return;
     try {
       setError('');
-      setIsBatchWorking(true);
+      setBatchWorkingType('enqueue');
       await appApi.hotBaziTasks.enqueueMany(selectedTaskIds);
       setNotice(`已将 ${selectedTaskIds.length} 条热点八字任务送入调度池。`);
       setSelectedTaskIds([]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setIsBatchWorking(false);
+      setBatchWorkingType(null);
     }
   }
 
@@ -402,7 +466,7 @@ export function HotBaziPage() {
     try {
       setError('');
       setNotice('');
-      setIsBatchWorking(true);
+      setBatchWorkingType('regenerate');
       setRunStatus('running', '正在重新生成图片和排盘...');
       const result = await appApi.ai.regenerateHotBaziMedia(selectedTaskIds, mediaDir);
       setNotice(`重新生成完成：成功 ${result.successCount} 条，总计请求 ${result.totalRequested} 条。`);
@@ -414,7 +478,7 @@ export function HotBaziPage() {
       setError(message);
       setRunStatus('failed', message);
     } finally {
-      setIsBatchWorking(false);
+      setBatchWorkingType(null);
     }
   }
 
@@ -476,36 +540,228 @@ export function HotBaziPage() {
       {error && <div className="tw-mb-4 tw-rounded-2xl tw-border tw-border-red-100 tw-bg-red-50 tw-p-4 tw-text-sm tw-font-bold tw-text-red-600">{error}</div>}
 
       <div className="tw-grid tw-gap-4">
-        <section className="tw-rounded-[1.5rem] tw-border tw-border-slate-200 tw-bg-white tw-p-5 tw-shadow-sm">
-          <div className="tw-mb-3 tw-text-sm tw-font-medium tw-leading-6 tw-text-slate-600">
-            今日已整理完成的热点人物：
-            <button type="button" onClick={openHotPeoplePage} className="tw-ml-1 tw-inline-flex tw-items-center tw-gap-1 tw-rounded-lg tw-px-1 tw-font-bold tw-text-slate-900 hover:tw-bg-slate-100 hover:tw-text-slate-950">
-              {todayCompletedHotPeopleCount} 个
-            </button>
+        <section className="tw-rounded-2xl tw-border tw-border-slate-200 tw-bg-white tw-px-4 tw-py-3 tw-shadow-sm">
+          <div className="tw-flex tw-flex-col sm:tw-flex-row sm:tw-items-center tw-justify-between tw-gap-4">
+            
+            {/* 左侧：精简的单行文字状态 */}
+            <div className="tw-flex tw-items-center tw-gap-3">
+              <div className="tw-flex tw-items-center tw-justify-center tw-w-8 tw-h-8 tw-rounded-full tw-bg-rose-50 tw-text-rose-500">
+                <Flame size={16} />
+              </div>
+              <div className="tw-text-[13px] tw-font-medium tw-text-slate-600">
+                <span className="tw-font-bold tw-text-slate-900 tw-mr-1.5">今日情报：</span>
+                发现 <strong className="tw-text-slate-900">{displayList.length}</strong> 位，
+                待生成 <strong className="tw-text-amber-500">{pendingItems.length}</strong> 位，
+                已完成 <strong className="tw-text-emerald-500">{generatedItems.length}</strong> 位。
+              </div>
+            </div>
+
+            {/* 右侧：单排按钮及开关 */}
+            <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-2.5">
+              <label className="tw-flex tw-items-center tw-gap-1.5 tw-cursor-pointer tw-text-xs tw-font-bold tw-text-slate-500 hover:tw-text-slate-800">
+                <input type="checkbox" checked={autoEnqueue} onChange={e => setAutoEnqueue(e.target.checked)} className="tw-rounded tw-border-slate-300 tw-text-violet-600 focus:tw-ring-violet-500 tw-w-3.5 tw-h-3.5" />
+                自动送发
+              </label>
+
+              <div className="tw-hidden sm:tw-block tw-w-px tw-h-4 tw-bg-slate-200 tw-mx-0.5"></div>
+
+              {displayList.length > 0 && !pipeline.isRunning && (
+                <button
+                  type="button"
+                  onClick={() => setIsTopicModalOpen(true)}
+                  className="tw-inline-flex tw-h-8 tw-items-center tw-justify-center tw-rounded-lg tw-border tw-border-slate-200 tw-bg-white tw-px-3 tw-text-xs tw-font-bold tw-text-slate-700 hover:tw-bg-slate-50 tw-transition-colors"
+                >
+                  挑选人物
+                </button>
+              )}
+
+              {pipeline.isRunning ? (
+                <button type="button" onClick={pipeline.cancel} className="tw-inline-flex tw-h-8 tw-items-center tw-justify-center tw-gap-1.5 tw-rounded-lg tw-border tw-border-red-200 tw-bg-red-50 tw-px-3 tw-text-xs tw-font-bold tw-text-red-600 hover:tw-bg-red-100 tw-transition-colors">
+                  ⏹ 紧急中止
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!accountId) { setError('请先配置发号器'); openConfigModal(); return; }
+                    const limitNum = batchSize === 'all' ? undefined : Number(batchSize);
+                    void pipeline.runPipeline({
+                      accountId: Number(accountId), model, promptTemplate, autoEnqueue, mediaDir,
+                      limit: limitNum,
+                      selectedPairs: selectedPairKeys.size > 0
+                        ? pendingItems.filter(d => selectedPairKeys.has(d.key)).map(d => ({ personId: d.personId, topicTitle: d.topicTitle }))
+                        : undefined,
+                    });
+                  }}
+                  disabled={!accountId}
+                  className="tw-inline-flex tw-h-8 tw-items-center tw-justify-center tw-gap-1.5 tw-rounded-lg tw-bg-slate-900 tw-px-4 tw-text-xs tw-font-black tw-text-white tw-shadow-sm hover:tw-shadow-md tw-transition-all disabled:tw-cursor-not-allowed disabled:tw-opacity-50"
+                >
+                  <Sparkles size={12} /> {selectedPairKeys.size > 0 ? `只生成选中 (${selectedPairKeys.size})` : `一键生成`}
+                </button>
+              )}
+
+              <button type="button" onClick={openConfigModal} className="tw-inline-flex tw-h-8 tw-w-8 tw-items-center tw-justify-center tw-rounded-lg tw-border tw-border-slate-200 tw-bg-white tw-text-slate-500 hover:tw-bg-slate-50 tw-transition-colors" title="配置流水线">
+                <Settings2 size={14} />
+              </button>
+            </div>
           </div>
-          <div className="tw-flex tw-flex-col tw-gap-3 sm:tw-flex-row">
-            <button type="button" onClick={() => void handleGenerate()} disabled={isGenerating || !accountId} className="tw-inline-flex tw-h-12 tw-flex-1 tw-items-center tw-justify-center tw-gap-2 tw-rounded-2xl tw-bg-slate-900 tw-px-4 tw-text-sm tw-font-black tw-text-white disabled:tw-cursor-not-allowed disabled:tw-bg-slate-300">
-              {isGenerating ? <Loader2 size={16} className="tw-animate-spin" /> : <Sparkles size={16} />}
-              {isGenerating ? '正在生成' : '开始生成'}
-            </button>
-            <button type="button" onClick={openConfigModal} className="tw-inline-flex tw-h-12 tw-items-center tw-justify-center tw-gap-2 tw-rounded-2xl tw-border tw-border-slate-200 tw-bg-white tw-px-4 tw-text-sm tw-font-bold tw-text-slate-700 hover:tw-bg-slate-50">
-              <Settings2 size={16} />
-              更多设置
-            </button>
-            <button type="button" onClick={() => window.open('#/export/bazi-chart?preview=1', '_blank', 'width=1080,height=1000')} className="tw-inline-flex tw-h-12 tw-items-center tw-justify-center tw-gap-2 tw-rounded-2xl tw-border tw-border-slate-200 tw-bg-white tw-px-4 tw-text-sm tw-font-bold tw-text-slate-700 hover:tw-bg-slate-50">
-              <ImageIcon size={16} />
-              效果预览
-            </button>
-          </div>
-          <div className="tw-mt-3 tw-flex tw-flex-wrap tw-items-center tw-gap-2 tw-text-xs tw-font-bold">
-            <span className={`tw-rounded-full tw-px-3 tw-py-1 ${runState.status === 'running' ? 'tw-bg-blue-50 tw-text-blue-600' : runState.status === 'success' ? 'tw-bg-emerald-50 tw-text-emerald-600' : runState.status === 'failed' ? 'tw-bg-red-50 tw-text-red-600' : 'tw-bg-slate-100 tw-text-slate-500'}`}>
-              {runStatusLabel}
-            </span>
-            {runState.updatedAt && <span className="tw-text-slate-400">{new Date(runState.updatedAt).toLocaleString()}</span>}
-            {runState.message && <span className="tw-text-slate-500 tw-font-medium">{runState.message}</span>}
-          </div>
+
+          {/* Pipeline 状态反馈区域 (Only show if running or has steps) */}
+          {(pipeline.isRunning || Object.keys(pipeline.state.steps).length > 0) && (
+            <div className="tw-mt-8 tw-rounded-2xl tw-bg-slate-50 tw-p-5 tw-border tw-border-slate-100">
+              {/* 进度条 */}
+              {pipeline.isRunning && (
+                <div className="tw-mb-4">
+                  <div className="tw-flex tw-items-center tw-justify-between tw-gap-3 tw-mb-2">
+                    <span className="tw-flex-1 tw-min-w-0 tw-truncate tw-text-xs tw-font-bold tw-text-slate-500" title={pipeline.state.currentMessage}>
+                      {pipeline.state.currentMessage}
+                    </span>
+                    <span className="tw-shrink-0 tw-text-xs tw-font-black tw-text-slate-900">{pipeline.state.progress}%</span>
+                  </div>
+                  <div className="tw-h-2 tw-rounded-full tw-bg-slate-200 tw-overflow-hidden">
+                    <div className="tw-h-full tw-rounded-full tw-bg-gradient-to-r tw-from-violet-500 tw-to-indigo-500 tw-transition-all tw-duration-500" style={{ width: `${pipeline.state.progress}%` }} />
+                  </div>
+                </div>
+              )}
+
+              {/* 步骤结果 */}
+              {Object.keys(pipeline.state.steps).length > 0 && (
+                <div className="tw-flex tw-flex-col tw-gap-2">
+                  {Object.entries(pipeline.state.steps).map(([key, step]) => (
+                    <div key={key} className="tw-flex tw-items-start tw-gap-2 tw-text-sm">
+                      <span className={`tw-shrink-0 tw-mt-0.5 ${step.ok ? 'tw-text-emerald-500' : 'tw-text-red-500'}`}>
+                        {step.ok ? '✓' : '✗'}
+                      </span>
+                      <span className={`tw-font-medium ${step.ok ? 'tw-text-slate-600' : 'tw-text-red-600'}`}>
+                        {step.message}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
+        {/* 热点×人物 选择弹窗 */}
+        {isTopicModalOpen && (
+          <div className="tw-fixed tw-inset-0 tw-z-50 tw-flex tw-items-center tw-justify-center tw-bg-slate-900/50 tw-p-4 tw-backdrop-blur-sm">
+            <div className="tw-flex tw-h-full tw-max-h-[85vh] tw-w-full tw-max-w-3xl tw-flex-col tw-rounded-[2rem] tw-bg-white tw-shadow-2xl tw-overflow-hidden">
+              <div className="tw-flex tw-items-center tw-justify-between tw-border-b tw-border-slate-100 tw-px-6 tw-py-5">
+                <h2 className="tw-text-lg tw-font-extrabold tw-text-slate-900 tw-flex tw-items-center tw-gap-2">
+                  <Flame className="tw-text-rose-500" size={20} />
+                  今日热点与相关人物
+                </h2>
+                <button type="button" onClick={() => setIsTopicModalOpen(false)} className="tw-rounded-full tw-p-2 tw-text-slate-400 hover:tw-bg-slate-100 hover:tw-text-slate-600 tw-transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <div className="tw-flex-1 tw-overflow-y-auto tw-p-6 tw-space-y-4 tw-bg-slate-50/50">
+                {groupedTopics.length === 0 ? (
+                  <div className="tw-py-12 tw-text-center">
+                    <p className="tw-text-sm tw-font-bold tw-text-slate-500">暂无今日热点×人物匹配数据</p>
+                    <p className="tw-mt-1 tw-text-xs tw-text-slate-400">请先在控制面板点击"一键生成"来同步数据</p>
+                  </div>
+                ) : (
+                  groupedTopics.map((group, idx) => {
+                    const hotLabel = formatHotValue(group.hotValue, group.hotValueNum);
+                    const platformColors: Record<string, string> = { '微博': 'tw-bg-red-50 tw-text-red-600', '头条': 'tw-bg-orange-50 tw-text-orange-600', '腾讯': 'tw-bg-blue-50 tw-text-blue-600', 'ZAKER': 'tw-bg-emerald-50 tw-text-emerald-700' };
+                    const pClass = platformColors[group.topicPlatform] || 'tw-bg-slate-100 tw-text-slate-600';
+                    const allGenerated = group.pairs.every(p => p.generated);
+                    const someSelected = group.pairs.some(p => selectedPairKeys.has(p.key));
+                    const allSelectableSelected = group.pairs.filter(p => !p.generated).length > 0 && group.pairs.filter(p => !p.generated).every(p => selectedPairKeys.has(p.key));
+
+                    return (
+                      <div key={idx} className={`tw-rounded-2xl tw-border tw-bg-white tw-overflow-hidden tw-transition-colors ${allGenerated ? 'tw-border-slate-200/60 tw-opacity-70' : someSelected ? 'tw-border-violet-300' : 'tw-border-slate-200'}`}>
+                        {/* Topic Header */}
+                        <div className={`tw-flex tw-items-center tw-gap-3 tw-px-4 tw-py-3 tw-border-b ${allGenerated ? 'tw-border-slate-100 tw-bg-slate-50/50' : 'tw-border-slate-100 tw-bg-slate-50'}`}>
+                          {!allGenerated && (
+                            <input
+                              type="checkbox"
+                              checked={allSelectableSelected}
+                              ref={(el) => { if (el) el.indeterminate = someSelected && !allSelectableSelected; }}
+                              onChange={() => {
+                                setSelectedPairKeys(prev => {
+                                  const next = new Set(prev);
+                                  const selectable = group.pairs.filter(p => !p.generated);
+                                  if (allSelectableSelected) {
+                                    selectable.forEach(p => next.delete(p.key));
+                                  } else {
+                                    selectable.forEach(p => next.add(p.key));
+                                  }
+                                  return next;
+                                });
+                              }}
+                              className="tw-rounded tw-shrink-0"
+                            />
+                          )}
+                          <div className="tw-flex-1 tw-min-w-0">
+                            <div className="tw-flex tw-items-center tw-gap-2 tw-mb-1">
+                              <span className={`tw-shrink-0 tw-rounded-md tw-px-1.5 tw-py-0.5 tw-text-[10px] tw-font-bold ${pClass}`}>{group.topicPlatform}</span>
+                              {hotLabel && (
+                                <span className="tw-shrink-0 tw-inline-flex tw-items-center tw-gap-0.5 tw-rounded-md tw-bg-rose-50 tw-px-1.5 tw-py-0.5 tw-text-[10px] tw-font-bold tw-text-rose-600">
+                                  <Flame size={10} /> {hotLabel}
+                                </span>
+                              )}
+                            </div>
+                            <h3 className={`tw-text-sm tw-font-bold tw-truncate ${allGenerated ? 'tw-text-slate-500' : 'tw-text-slate-900'}`}>{group.topicTitle}</h3>
+                          </div>
+                          {allGenerated && <span className="tw-shrink-0 tw-text-[10px] tw-font-bold tw-text-emerald-600 tw-bg-emerald-50 tw-px-2 tw-py-1 tw-rounded-full">✅ 全部已生成</span>}
+                        </div>
+                        
+                        {/* People List */}
+                        <div className="tw-divide-y tw-divide-slate-50 tw-px-4">
+                          {group.pairs.map(pair => {
+                            const isSelected = selectedPairKeys.has(pair.key);
+                            return (
+                              <label key={pair.key} className={`tw-flex tw-items-center tw-gap-3 tw-py-2.5 tw-cursor-pointer hover:tw-bg-slate-50/50 tw-transition-colors ${pair.generated ? 'tw-opacity-60 tw-cursor-default' : ''}`}>
+                                {!pair.generated ? (
+                                  <input type="checkbox" checked={isSelected} onChange={() => {
+                                    setSelectedPairKeys(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(pair.key)) next.delete(pair.key);
+                                      else next.add(pair.key);
+                                      return next;
+                                    });
+                                  }} className="tw-rounded tw-shrink-0" />
+                                ) : (
+                                  <div className="tw-w-3.5 tw-shrink-0" />
+                                )}
+                                <span className={`tw-flex-1 tw-text-sm tw-font-bold ${pair.generated ? 'tw-text-slate-500' : isSelected ? 'tw-text-violet-700' : 'tw-text-slate-700'}`}>
+                                  {pair.personName}
+                                </span>
+                                <span className={`tw-shrink-0 tw-rounded-full tw-px-2 tw-py-0.5 tw-text-[10px] tw-font-bold ${pair.generated ? 'tw-bg-emerald-50 tw-text-emerald-600' : 'tw-bg-amber-50 tw-text-amber-600'}`}>
+                                  {pair.generated ? '已生成' : '待生成'}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+              
+              <div className="tw-flex tw-items-center tw-justify-between tw-border-t tw-border-slate-100 tw-bg-slate-50 tw-px-6 tw-py-4">
+                <span className="tw-text-xs tw-font-bold tw-text-slate-500">
+                  已选 <strong className="tw-text-violet-600 tw-text-sm">{selectedPairKeys.size}</strong> 个人物
+                </span>
+                <div className="tw-flex tw-gap-3">
+                  <button type="button" onClick={() => setIsTopicModalOpen(false)} className="tw-rounded-xl tw-bg-white tw-px-5 tw-py-2 tw-text-sm tw-font-bold tw-text-slate-600 tw-border tw-border-slate-200 hover:tw-bg-slate-50">
+                    取消
+                  </button>
+                  <button type="button" onClick={() => {
+                    setIsTopicModalOpen(false);
+                  }} disabled={selectedPairKeys.size === 0} className="tw-rounded-xl tw-bg-slate-900 tw-px-5 tw-py-2 tw-text-sm tw-font-bold tw-text-white disabled:tw-opacity-50 disabled:tw-cursor-not-allowed">
+                    {`确认挑选 (${selectedPairKeys.size})`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <section className="tw-rounded-[1.5rem] tw-border tw-border-slate-200 tw-bg-white tw-p-5 tw-shadow-sm">
           <div className="tw-mb-4 tw-flex tw-flex-col tw-gap-3 tw-border-b tw-border-slate-200 tw-pb-3 md:tw-flex-row md:tw-items-end md:tw-justify-between">
             <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3">
@@ -513,16 +769,16 @@ export function HotBaziPage() {
                 <input type="checkbox" checked={visibleAllSelected} onChange={toggleAllSelection} aria-label="全选当前列表任务" />
                 全选
               </label>
-              <button type="button" onClick={() => void handleBatchEnqueue()} disabled={visibleSelectedTaskIds.length === 0 || isBatchWorking} className="tw-inline-flex tw-h-11 tw-items-center tw-justify-center tw-rounded-xl tw-bg-slate-900 tw-px-4 tw-text-xs tw-font-black tw-text-white disabled:tw-cursor-not-allowed disabled:tw-bg-slate-300">
-                {isBatchWorking ? <Loader2 size={14} className="tw-animate-spin" /> : null}
+              <button type="button" onClick={() => void handleBatchEnqueue()} disabled={visibleSelectedTaskIds.length === 0 || batchWorkingType !== null} className="tw-inline-flex tw-h-11 tw-items-center tw-justify-center tw-rounded-xl tw-bg-slate-900 tw-px-4 tw-text-xs tw-font-black tw-text-white disabled:tw-cursor-not-allowed disabled:tw-bg-slate-300">
+                {batchWorkingType === 'enqueue' ? <Loader2 size={14} className="tw-animate-spin" /> : null}
                 送调度
               </button>
-              <button type="button" onClick={() => void handleBatchDelete()} disabled={visibleSelectedTaskIds.length === 0 || isBatchWorking} className="tw-inline-flex tw-h-11 tw-items-center tw-justify-center tw-rounded-xl tw-border tw-border-red-200 tw-bg-red-50 tw-px-4 tw-text-xs tw-font-black tw-text-red-600 disabled:tw-cursor-not-allowed disabled:tw-opacity-50">
-                {isBatchWorking ? <Loader2 size={14} className="tw-animate-spin" /> : null}
+              <button type="button" onClick={() => void handleBatchDelete()} disabled={visibleSelectedTaskIds.length === 0 || batchWorkingType !== null} className="tw-inline-flex tw-h-11 tw-items-center tw-justify-center tw-rounded-xl tw-border tw-border-red-200 tw-bg-red-50 tw-px-4 tw-text-xs tw-font-black tw-text-red-600 disabled:tw-cursor-not-allowed disabled:tw-opacity-50">
+                {batchWorkingType === 'delete' ? <Loader2 size={14} className="tw-animate-spin" /> : null}
                 批量删除
               </button>
-              <button type="button" onClick={() => void handleRegenerateMedia()} disabled={visibleSelectedTaskIds.length === 0 || isBatchWorking} className="tw-inline-flex tw-h-11 tw-items-center tw-justify-center tw-rounded-xl tw-border tw-border-blue-200 tw-bg-blue-50 tw-px-4 tw-text-xs tw-font-black tw-text-blue-600 disabled:tw-cursor-not-allowed disabled:tw-opacity-50">
-                {isBatchWorking ? <Loader2 size={14} className="tw-animate-spin" /> : null}
+              <button type="button" onClick={() => void handleRegenerateMedia()} disabled={visibleSelectedTaskIds.length === 0 || batchWorkingType !== null} className="tw-inline-flex tw-h-11 tw-items-center tw-justify-center tw-rounded-xl tw-border tw-border-blue-200 tw-bg-blue-50 tw-px-4 tw-text-xs tw-font-black tw-text-blue-600 disabled:tw-cursor-not-allowed disabled:tw-opacity-50">
+                {batchWorkingType === 'regenerate' ? <Loader2 size={14} className="tw-animate-spin" /> : null}
                 补全图片/排盘
               </button>
             </div>
@@ -558,121 +814,172 @@ export function HotBaziPage() {
               </div>
             </div>
           ) : (
-            <div className="tw-max-w-full tw-overflow-x-auto">
-              <table className="tw-w-full tw-border-collapse">
-                <thead>
-                  <tr className="tw-border-b tw-border-slate-200">
-                    <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">选择</th>
-                    <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">序号</th>
-                    <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">热点标题</th>
-                    <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">账号</th>
-                    <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">状态</th>
-                    <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">内容</th>
-                    <th className="tw-whitespace-nowrap tw-px-3 tw-py-3 tw-text-left tw-text-xs tw-font-black tw-text-slate-400">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleTasks.map((task, index) => (
-                    <tr key={task.id} className="tw-border-b tw-border-slate-100 hover:tw-bg-slate-50/60">
-                      <td className="tw-px-3 tw-py-4 tw-align-top">
-                        <input type="checkbox" checked={selectedTaskIds.includes(task.id)} onChange={() => toggleTaskSelection(task.id)} aria-label={`选择任务 ${task.sourceTopic || task.id}`} />
-                      </td>
-                      <td className="tw-whitespace-nowrap tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-font-bold tw-text-slate-500">{index + 1}</td>
-                      <td className="tw-whitespace-nowrap tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-font-bold tw-text-slate-800">{task.sourceTopic || '未标记来源热点'}</td>
-                      <td className="tw-whitespace-nowrap tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-text-slate-600">{accountNameById.get(task.accountId) || task.accountId}</td>
-                      <td className="tw-whitespace-nowrap tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-font-bold tw-text-slate-600">{task.status === 'queued' ? '已送到发布调度' : '待送调度'}</td>
-                      <td className="tw-px-3 tw-py-4 tw-align-top tw-text-sm tw-text-slate-700">
-                        <div className="tw-max-w-[320px] md:tw-max-w-[420px] tw-overflow-hidden tw-text-ellipsis tw-leading-6" style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', whiteSpace: 'pre-wrap' }}>
-                          {taskContentPreview(task) || '还没有正文内容'}
+            <div className="tw-flex tw-flex-col tw-gap-5 tw-w-full tw-animate-in tw-fade-in tw-duration-300">
+              {visibleTasks.map((task, index) => {
+                const payloadContent = taskContentPreview(task);
+                const imageExts = ['png', 'jpg', 'jpeg', 'webp'];
+                const imagePaths = task.mediaPathsJson.filter((p) => imageExts.includes(p.split('.').pop()?.toLowerCase() || ''));
+                const nonImagePaths = task.mediaPathsJson.filter((p) => !imageExts.includes(p.split('.').pop()?.toLowerCase() || ''));
+
+                return (
+                  <div key={task.id} className="tw-group tw-flex tw-flex-col tw-rounded-[1.25rem] tw-border tw-border-slate-200 tw-bg-white hover:tw-border-slate-300 hover:tw-shadow-md tw-transition-all tw-duration-300">
+                    
+                    {/* Header: Checkbox + Avatar + Topic/Account */}
+                    <div className="tw-flex tw-items-center tw-justify-between tw-px-5 tw-py-4">
+                      <div className="tw-flex tw-items-center tw-gap-3 tw-min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={selectedTaskIds.includes(task.id)}
+                          onChange={() => toggleTaskSelection(task.id)}
+                          className="tw-shrink-0 tw-w-4 tw-h-4 tw-rounded tw-border-slate-300 tw-text-violet-600 focus:tw-ring-violet-500 tw-transition-colors tw-cursor-pointer"
+                        />
+                        <div className="tw-flex tw-items-center tw-justify-center tw-w-10 tw-h-10 tw-rounded-full tw-bg-gradient-to-br tw-from-violet-500 tw-to-fuchsia-500 tw-text-white tw-font-bold tw-text-sm tw-shrink-0 tw-shadow-sm">
+                           {accountNameById.get(task.accountId)?.charAt(0) || '账'}
                         </div>
-                        {task.mediaPathsJson.length > 0 && (() => {
-                          const imageExts = ['png', 'jpg', 'jpeg', 'webp'];
-                          const imagePaths = task.mediaPathsJson.filter((p) => imageExts.includes(p.split('.').pop()?.toLowerCase() || ''));
-                          const nonImagePaths = task.mediaPathsJson.filter((p) => !imageExts.includes(p.split('.').pop()?.toLowerCase() || ''));
-                          const previewCount = Math.min(imagePaths.length, 3);
-                          const overflowCount = imagePaths.length - previewCount;
-                          return (
-                            <div className="tw-mt-2 tw-flex tw-items-center tw-gap-2">
-                              {imagePaths.length > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() => { setLightboxImages(imagePaths.map((p) => `file:///${p.replace(/\\/g, '/')}`)); setLightboxIndex(0); }}
-                                  className="tw-group tw-flex tw-items-center tw-gap-0 tw-cursor-pointer tw-transition-all hover:tw-gap-1"
-                                  title={`查看 ${imagePaths.length} 张图片`}
-                                >
-                                  {imagePaths.slice(0, previewCount).map((p, i) => (
-                                    <div
-                                      key={p}
-                                      className="tw-relative tw-w-10 tw-h-10 tw-rounded-lg tw-overflow-hidden tw-border-2 tw-border-white tw-shadow-sm tw-transition-transform group-hover:tw-scale-105"
-                                      style={{ marginLeft: i === 0 ? 0 : '-8px', zIndex: previewCount - i }}
-                                    >
-                                      <img src={`file:///${p.replace(/\\/g, '/')}`} alt="" className="tw-w-full tw-h-full tw-object-cover" />
-                                    </div>
-                                  ))}
-                                  {overflowCount > 0 && (
-                                    <div className="tw-relative tw-flex tw-items-center tw-justify-center tw-w-10 tw-h-10 tw-rounded-lg tw-bg-slate-100 tw-border-2 tw-border-white tw-shadow-sm tw-text-[11px] tw-font-black tw-text-slate-500" style={{ marginLeft: '-8px', zIndex: 0 }}>
-                                      +{overflowCount}
-                                    </div>
-                                  )}
-                                  <span className="tw-ml-1.5 tw-text-[11px] tw-font-bold tw-text-slate-400 group-hover:tw-text-slate-600 tw-transition-colors tw-flex tw-items-center tw-gap-1">
-                                    <ImageIcon size={12} />
-                                    {imagePaths.length}
-                                  </span>
-                                </button>
-                              )}
-                              {nonImagePaths.map((path) => (
-                                <span key={path} className="tw-rounded-full tw-bg-slate-100 tw-px-2 tw-py-0.5 tw-text-[9px] tw-font-bold tw-text-slate-500 tw-border tw-border-slate-200 tw-truncate tw-max-w-[100px]" title={path}>
-                                  {path.split(/[\\/]/).pop()}
-                                </span>
+                        <div className="tw-flex-1 tw-min-w-0">
+                          <h4 className="tw-text-[15px] tw-font-extrabold tw-text-slate-900 tw-truncate">
+                            {accountNameById.get(task.accountId) || task.accountId}
+                          </h4>
+                          <div className="tw-flex tw-items-center tw-gap-2 tw-mt-0.5 tw-text-[12px] tw-text-slate-400">
+                            <span className="tw-font-bold">#{index + 1}</span>
+                            <span>·</span>
+                            <span className="tw-text-violet-600 tw-font-bold tw-truncate" title={task.sourceTopic || '未标记来源热点'}>
+                              {task.sourceTopic ? `#${task.sourceTopic}#` : '#未标记热点#'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="tw-shrink-0 tw-ml-3">
+                        {task.status === 'queued' ? (
+                          <div className="tw-flex tw-items-center tw-gap-1 tw-px-2.5 tw-py-1 tw-rounded-md tw-bg-emerald-50 tw-text-[11px] tw-font-black tw-text-emerald-600 tw-border tw-border-emerald-100">
+                            <Send size={10} />
+                            已调度
+                          </div>
+                        ) : (
+                          <div className="tw-flex tw-items-center tw-gap-1 tw-px-2.5 tw-py-1 tw-rounded-md tw-bg-amber-50 tw-text-[11px] tw-font-black tw-text-amber-600 tw-border tw-border-amber-100">
+                            待调度
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Content Body */}
+                    <div className="tw-px-5 tw-pb-4">
+                      <div className={`tw-text-[15px] tw-leading-[1.8] tw-text-slate-800 tw-whitespace-pre-wrap tw-transition-all ${expandedTaskIds.has(task.id) ? '' : 'tw-line-clamp-4'}`}>
+                        {payloadContent || <span className="tw-text-slate-400 tw-italic">还没有正文内容...</span>}
+                      </div>
+                      {payloadContent && payloadContent.length > 120 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExpandedTaskIds(prev => {
+                              const next = new Set(prev);
+                              if (next.has(task.id)) next.delete(task.id);
+                              else next.add(task.id);
+                              return next;
+                            });
+                          }}
+                          className="tw-mt-1 tw-text-[14px] tw-font-bold tw-text-violet-600 hover:tw-text-violet-700 tw-transition-colors"
+                        >
+                          {expandedTaskIds.has(task.id) ? '收起' : '全文'}
+                        </button>
+                      )}
+
+                      {/* Media Assets */}
+                      {task.mediaPathsJson.length > 0 && (
+                        <div className="tw-mt-3">
+                          {imagePaths.length > 0 && (
+                            <div className="tw-flex tw-flex-wrap tw-gap-2">
+                              {imagePaths.map((p, i) => {
+                                const safeFileUrl = (imgPath: string) => 'file:///' + imgPath.replace(/\\/g, '/').split('/').map(seg => seg.match(/^[a-zA-Z]:$/) ? seg : encodeURIComponent(seg)).join('/');
+                                return (
+                                  <button
+                                    key={p}
+                                    type="button"
+                                    onClick={() => { setLightboxImages(imagePaths.map(img => safeFileUrl(img))); setLightboxIndex(i); }}
+                                    className={`tw-relative tw-shrink-0 tw-overflow-hidden tw-border tw-border-slate-100 tw-bg-slate-50 hover:tw-opacity-90 tw-transition-opacity tw-rounded-xl ${imagePaths.length === 1 ? 'tw-w-[200px] tw-h-[200px]' : 'tw-w-[110px] tw-h-[110px]'}`}
+                                  >
+                                    <img src={safeFileUrl(p)} alt="" className="tw-w-full tw-h-full tw-object-cover" />
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                          
+                          {/* Non-image files */}
+                          {nonImagePaths.length > 0 && (
+                            <div className="tw-mt-3 tw-flex tw-flex-wrap tw-gap-2">
+                              {nonImagePaths.map(p => (
+                                <div key={p} className="tw-flex tw-items-center tw-px-3 tw-py-1.5 tw-rounded-lg tw-bg-slate-50 tw-border tw-border-slate-200 tw-text-[12px] tw-font-bold tw-text-slate-500 tw-max-w-[200px] tw-truncate" title={p}>
+                                  <FolderOpen size={14} className="tw-mr-1.5 tw-shrink-0" />
+                                  {p.split(/[\\/]/).pop()}
+                                </div>
                               ))}
                             </div>
-                          );
-                        })()}
-                      </td>
-                      <td className="tw-px-3 tw-py-4 tw-align-top">
-                        <div className="tw-flex tw-flex-col tw-gap-2">
-                          <button type="button" onClick={() => startEdit(task)} className={actionButtonNeutralClass}>
-                            <Pencil size={12} />
-                            <span>编辑</span>
-                          </button>
-                          <button type="button" onClick={() => {
-                            setIsEnqueueingTaskId(task.id);
-                            void appApi.hotBaziTasks.enqueue(task.id).then(() => {
-                              setNotice('已送入调度池。');
-                              return load();
-                            }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause))).finally(() => setIsEnqueueingTaskId(null));
-                          }} disabled={isEnqueueingTaskId === task.id} className={actionButtonPrimaryClass}>
-                            {isEnqueueingTaskId === task.id ? <Loader2 size={12} className="tw-animate-spin" /> : <Send size={12} />}
-                            <span>送调度</span>
-                          </button>
-                          <button type="button" onClick={() => {
-                            void copyTextToClipboard(taskContentPreview(task) || '')
-                              .then(() => {
-                                setError('');
-                                setNotice('已复制热点八字内容。');
-                                setCopiedTaskId(task.id);
-                                window.setTimeout(() => {
-                                  setCopiedTaskId((current) => (current === task.id ? null : current));
-                                }, 1600);
-                              })
-                              .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
-                          }} className={actionButtonNeutralClass}>
-                            <Copy size={12} />
-                            <span>{copiedTaskId === task.id ? '已复制' : '复制'}</span>
-                          </button>
-                          <button type="button" onClick={() => {
-                            setIsDeletingTaskId(task.id);
-                            void appApi.hotBaziTasks.delete(task.id).then(() => { setNotice('已删除任务。'); return load(); }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause))).finally(() => setIsDeletingTaskId(null));
-                          }} disabled={isDeletingTaskId === task.id} className={actionButtonDangerClass}>
-                            {isDeletingTaskId === task.id ? <Loader2 size={12} className="tw-animate-spin" /> : <Trash2 size={12} />}
-                            <span>删除</span>
-                          </button>
+                          )}
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      )}
+                    </div>
+
+                    {/* Actions Panel (Weibo action bar style) */}
+                    <div className="tw-flex tw-items-center tw-border-t tw-border-slate-100 tw-bg-slate-50/50 tw-rounded-b-[1.25rem]">
+                      <button type="button" onClick={() => startEdit(task)} className="tw-flex-1 tw-flex tw-items-center tw-justify-center tw-gap-1.5 tw-py-3 tw-text-[13px] tw-font-bold tw-text-slate-500 hover:tw-text-violet-600 hover:tw-bg-slate-100 tw-rounded-bl-[1.25rem] tw-transition-colors">
+                        <Pencil size={14} /> 编辑
+                      </button>
+                      <div className="tw-w-px tw-h-4 tw-bg-slate-200"></div>
+                      
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEnqueueingTaskId(task.id);
+                          void appApi.hotBaziTasks.enqueue(task.id)
+                            .then(() => { setNotice('已送入调度池。'); return load(); })
+                            .catch(cause => setError(cause instanceof Error ? cause.message : String(cause)))
+                            .finally(() => setIsEnqueueingTaskId(null));
+                        }}
+                        disabled={isEnqueueingTaskId === task.id || task.status === 'queued'}
+                        className="tw-flex-1 tw-flex tw-items-center tw-justify-center tw-gap-1.5 tw-py-3 tw-text-[13px] tw-font-bold tw-text-slate-500 hover:tw-text-emerald-600 hover:tw-bg-slate-100 disabled:tw-opacity-50 disabled:tw-cursor-not-allowed tw-transition-colors"
+                      >
+                        {isEnqueueingTaskId === task.id ? <Loader2 size={14} className="tw-animate-spin" /> : <Send size={14} />} 送发
+                      </button>
+                      <div className="tw-w-px tw-h-4 tw-bg-slate-200"></div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void copyTextToClipboard(payloadContent)
+                            .then(() => {
+                              setError(''); setNotice('已复制内容。');
+                              setCopiedTaskId(task.id);
+                              setTimeout(() => setCopiedTaskId(c => c === task.id ? null : c), 1600);
+                            })
+                            .catch(e => setError(e instanceof Error ? e.message : String(e)));
+                        }}
+                        className="tw-flex-1 tw-flex tw-items-center tw-justify-center tw-gap-1.5 tw-py-3 tw-text-[13px] tw-font-bold tw-text-slate-500 hover:tw-text-blue-600 hover:tw-bg-slate-100 tw-transition-colors"
+                      >
+                        {copiedTaskId === task.id ? <Copy size={14} className="tw-text-emerald-500" /> : <Copy size={14} />} {copiedTaskId === task.id ? '已复制' : '复制'}
+                      </button>
+                      <div className="tw-w-px tw-h-4 tw-bg-slate-200"></div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsDeletingTaskId(task.id);
+                          void appApi.hotBaziTasks.delete(task.id)
+                            .then(() => { setNotice('已删除任务。'); return load(); })
+                            .catch(e => setError(e instanceof Error ? e.message : String(e)))
+                            .finally(() => setIsDeletingTaskId(null));
+                        }}
+                        disabled={isDeletingTaskId === task.id}
+                        className="tw-flex-1 tw-flex tw-items-center tw-justify-center tw-gap-1.5 tw-py-3 tw-text-[13px] tw-font-bold tw-text-slate-500 hover:tw-text-red-500 hover:tw-bg-slate-100 disabled:tw-opacity-50 tw-rounded-br-[1.25rem] tw-transition-colors"
+                      >
+                        {isDeletingTaskId === task.id ? <Loader2 size={14} className="tw-animate-spin" /> : <Trash2 size={14} />} 删除
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>

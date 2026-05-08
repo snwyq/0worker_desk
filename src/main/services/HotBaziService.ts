@@ -1,5 +1,5 @@
 import type { AppDatabase } from '../db/database.js';
-import type { GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotPerson } from '../../shared/types.js';
+import type { GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotPerson, TopicPersonPair, HotBaziProgressEvent } from '../../shared/types.js';
 import { Solar } from 'lunar-typescript';
 import { AiService } from './AiService.js';
 import { SchedulingEngine } from '../core/workflow/SchedulingEngine.js';
@@ -8,6 +8,17 @@ import { localChartRenderer } from './LocalChartRenderer.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
+
+/** 为异步操作添加超时保护 */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`TIMEOUT_${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
 
 function toSourceTopic(person: HotPerson) {
   return String(person.sourceTopicTitle || person.name || '').trim();
@@ -111,7 +122,10 @@ export class HotBaziService {
     }
   }
 
-  async generateBatch(input: GenerateHotBaziBatchInput): Promise<GenerateHotBaziBatchResult> {
+  async generateBatch(
+    input: GenerateHotBaziBatchInput,
+    onProgress?: (data: HotBaziProgressEvent) => void,
+  ): Promise<GenerateHotBaziBatchResult> {
     if (!this.db) {
       throw new Error('HOT_BAZI_DB_NOT_READY');
     }
@@ -121,8 +135,9 @@ export class HotBaziService {
       throw new Error(`Account ${input.accountId} was not found`);
     }
 
-    const people = this.db.hotPeople.list(input.limit ?? 20).filter((item: any) => item.analysisStatus === 'completed');
-    if (people.length === 0) {
+    // 1. 从今日热点×人物配对获取数据（已按热度排序）
+    const allPairs = this.db.hotTopicAnalysis.listTodayCompletedWithPeople();
+    if (allPairs.length === 0) {
       return {
         createdContents: 0,
         createdReviews: 0,
@@ -131,8 +146,44 @@ export class HotBaziService {
         failedPeople: 0,
         taskIds: [],
         contentIds: [],
-        errors: ['今日热点人物表里没有可用人物数据'],
+        errors: ['今日没有已匹配人物的热点数据'],
       };
+    }
+
+    // 2. 去重：按 (personId + topicTitle) 排除已生成的
+    const existingTasks = this.db.hotBaziTasks.list();
+    const existingKeys = new Set(
+      existingTasks.map((t: any) => `${t.hotPersonId}::${t.sourceTopic}`)
+    );
+
+    let pendingPairs = allPairs.filter((pair: TopicPersonPair) => {
+      const key = `${pair.personId}::${pair.topicTitle}`;
+      return !existingKeys.has(key);
+    });
+
+    // 3. 同一人物限制最多 1 条（取热度最高的，已按热度排序所以直接计数）
+    const MAX_PER_PERSON = 1;
+    const personCountMap = new Map<string, number>();
+    pendingPairs = pendingPairs.filter((pair: TopicPersonPair) => {
+      const count = personCountMap.get(pair.personName) ?? 0;
+      if (count >= MAX_PER_PERSON) return false;
+      personCountMap.set(pair.personName, count + 1);
+      return true;
+    });
+
+    // 4. 如果前端指定了要生成哪些配对
+    if (input.selectedPairs?.length) {
+      const selectedSet = new Set(
+        input.selectedPairs.map(p => `${p.personId}::${p.topicTitle}`)
+      );
+      pendingPairs = pendingPairs.filter((pair: TopicPersonPair) =>
+        selectedSet.has(`${pair.personId}::${pair.topicTitle}`)
+      );
+    }
+
+    // 5. 按 limit 截断
+    if (input.limit && input.limit < pendingPairs.length) {
+      pendingPairs = pendingPairs.slice(0, input.limit);
     }
 
     const promptTemplate = String(input.promptTemplate || '').trim() || getDefaultPromptTemplate();
@@ -149,50 +200,71 @@ export class HotBaziService {
       errors: [],
     };
 
-    for (let index = 0; index < people.length; index += 1) {
-      const person = people[index];
+    // 6. SchedulingEngine 在循环外创建一次
+    const schedulingEngine = new SchedulingEngine(this.db);
+
+    for (let index = 0; index < pendingPairs.length; index += 1) {
+      const pair = pendingPairs[index];
       try {
-        const prompt = renderPromptTemplate(promptTemplate, person);
-        const aiResponse = await this.ai.generateText({
-          prompt,
-          provider: 'dashscope',
-          model,
-          maxTokens: 900,
-        });
+        // 取人物完整数据
+        const person = this.db.hotPeople.findById(pair.personId);
+        if (!person) {
+          result.failedPeople += 1;
+          result.errors.push(`${pair.personName}: person_not_found_id_${pair.personId}`);
+          onProgress?.({ index: index + 1, total: pendingPairs.length, personName: pair.personName, topicTitle: pair.topicTitle, ok: false, error: 'person_not_found' });
+          continue;
+        }
+
+        // 强制用今日热点标题覆盖 sourceTopicTitle
+        const personForPrompt: HotPerson = {
+          ...person,
+          sourceTopicTitle: pair.topicTitle,
+        };
+        const prompt = renderPromptTemplate(promptTemplate, personForPrompt);
+
+        // 通知前端开始调用大模型
+        onProgress?.({ index: index + 1, total: pendingPairs.length, personName: pair.personName, topicTitle: pair.topicTitle, ok: true, status: '正在撰写命理分析(调用大模型)...' });
+
+        // AI 文案生成（45s 超时）
+        const aiResponse = await withTimeout(
+          this.ai.generateText({
+            prompt,
+            provider: 'dashscope',
+            model,
+            maxTokens: 900,
+          }),
+          45_000,
+        );
 
         const body = String(aiResponse.content || '').trim();
         if (!body) {
           result.failedPeople += 1;
-          result.errors.push(`${person.name}: empty_model_output`);
+          result.errors.push(`${pair.personName}: empty_model_output`);
+          onProgress?.({ index: index + 1, total: pendingPairs.length, personName: pair.personName, topicTitle: pair.topicTitle, ok: false, error: 'empty_output' });
           continue;
         }
 
-        const itemMediaPaths: string[] = [];
-        const generatedAt = new Date().toISOString();
-
-        try {
-          const scrapedPhotos = await imageScraperService.scrapeImages(person.name, 2, mediaDir);
-          itemMediaPaths.push(...scrapedPhotos);
-        } catch (e) {
-          console.error(`Failed to scrape images for ${person.name}:`, e);
-        }
-
-        const paragraphs = body.split('\\n').map(p => p.trim()).filter(p => p.length > 0 && !p.startsWith('#'));
+        // 核心修复：先安全剥离首部的 #话题名# 标签，防止由于大段落没换行导致被整体过滤
+        const cleanBody = body.replace(/^#.*?#\s*/, '').replace(/^[#*]+\s*/gm, ''); 
+        const paragraphs = cleanBody.split(/\r?\n|\\n/).map(p => p.trim()).filter(p => p.length > 0);
         const chartAnalysis = paragraphs[0] || '命理格局提取失败';
         const luckAnalysis = paragraphs[paragraphs.length - 1] || '流年断语提取失败';
 
-        try {
-          const generatedCharts = await localChartRenderer.renderBaziCharts(person, {
-            chartAnalysis,
-            luckAnalysis
-          }, mediaDir);
-          itemMediaPaths.push(...generatedCharts);
-        } catch (e) {
-          console.error(`Failed to render charts for ${person.name}:`, e);
-        }
+        // 通知前端开始渲染
+        onProgress?.({ index: index + 1, total: pendingPairs.length, personName: pair.personName, topicTitle: pair.topicTitle, ok: true, status: '正在渲染排盘与配图...' });
 
+        // 图片抓取 + 排盘渲染并行化（适当放宽超时时间，避免后台爬取成功但返回前已超时）
+        const [photosResult, chartsResult] = await Promise.allSettled([
+          withTimeout(imageScraperService.scrapeImages(`${person.name} ${pair.topicTitle}`, 2, mediaDir), 45_000),
+          withTimeout(localChartRenderer.renderBaziCharts(person, { chartAnalysis, luckAnalysis, paragraphs }, mediaDir), 45_000),
+        ]);
+        const scrapedPhotos = photosResult.status === 'fulfilled' ? photosResult.value : [];
+        const generatedCharts = chartsResult.status === 'fulfilled' ? chartsResult.value : [];
+        const itemMediaPaths = [...scrapedPhotos, ...generatedCharts];
+
+        // 逐条落盘——立即写入 DB
         const content = this.db.contentItems.create({
-          title: `${person.name} 热点八字`,
+          title: `${person.name} · ${pair.topicTitle}`,
           body,
           source: 'ai',
           status: 'ready',
@@ -200,10 +272,10 @@ export class HotBaziService {
           pluginCode: 'maoxiaoxian',
           styleId: 'mx_hot_bazi',
           topicsJson: [person.name, '热点八字'],
-          mediaJson: itemMediaPaths.map((path) => ({ path })),
+          mediaJson: itemMediaPaths.map((p) => ({ path: p })),
           sourceJson: {
             hotPersonId: person.id,
-            sourceTopic: toSourceTopic(person),
+            sourceTopic: pair.topicTitle,
             promptTemplate,
             model,
           },
@@ -215,7 +287,6 @@ export class HotBaziService {
         result.createdContents += 1;
         result.contentIds.push(content.id);
 
-        const schedulingEngine = new SchedulingEngine(this.db);
         const scheduledAt = schedulingEngine.allocateScheduledTime('maoxiaoxian.daily_hot_person');
 
         const task = this.db.hotBaziTasks.create({
@@ -223,7 +294,7 @@ export class HotBaziService {
           accountId: account.id,
           platform: account.platform,
           hotPersonId: person.id,
-          sourceTopic: toSourceTopic(person),
+          sourceTopic: pair.topicTitle,
           scheduledAt,
           status: 'draft',
           automationEnabled: false,
@@ -239,9 +310,13 @@ export class HotBaziService {
         });
         result.createdTasks += 1;
         result.taskIds.push(task.id);
+
+        onProgress?.({ index: index + 1, total: pendingPairs.length, personName: pair.personName, topicTitle: pair.topicTitle, ok: true, status: '完成' });
       } catch (error) {
         result.failedPeople += 1;
-        result.errors.push(`${person.name}: ${error instanceof Error ? error.message : String(error)}`);
+        const errMsg = error instanceof Error ? error.message : String(error);
+        result.errors.push(`${pair.personName}: ${errMsg}`);
+        onProgress?.({ index: index + 1, total: pendingPairs.length, personName: pair.personName, topicTitle: pair.topicTitle, ok: false, error: errMsg });
       }
     }
 
@@ -262,18 +337,21 @@ export class HotBaziService {
 
       const itemMediaPaths: string[] = [];
       try {
-        const scrapedPhotos = await imageScraperService.scrapeImages(person.name, 2, mediaDir);
+        const scrapedPhotos = await imageScraperService.scrapeImages(`${person.name} ${task.sourceTopic || ''}`.trim(), 2, mediaDir);
         itemMediaPaths.push(...scrapedPhotos);
       } catch (e) {
         console.error(`Failed to scrape images for ${person.name}:`, e);
       }
 
       const contentItem = this.db.contentItems.findById(task.contentId);
-      const body = contentItem?.body || '';
-      const paragraphs = body.split('\\n').map((p: string) => p.trim()).filter((p: string) => p.length > 0 && !p.startsWith('#'));
+      const rawBody = contentItem?.body || '';
+      // 核心修复：保持与主流程一致的健壮清洗逻辑，防止老数据切分出空数组
+      const cleanBody = rawBody.replace(/^#.*?#\s*/, '').replace(/^[#*]+\s*/gm, '');
+      const paragraphs = cleanBody.split(/\r?\n|\\n/).map((p: string) => p.trim()).filter((p: string) => p.length > 0);
       const generatedContentObj = {
         chartAnalysis: paragraphs[0] || '命理格局解析',
-        luckAnalysis: paragraphs[paragraphs.length - 1] || '流年断语参考'
+        luckAnalysis: paragraphs[paragraphs.length - 1] || '流年断语参考',
+        paragraphs
       };
 
       try {

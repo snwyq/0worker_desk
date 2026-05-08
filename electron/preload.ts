@@ -114,6 +114,12 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
     analyzeHotPeople: (input?: AnalyzeHotPeopleInput) => ipcRenderer.invoke('ai:analyzeHotPeople', input),
     generateHotBaziBatch: (input: GenerateHotBaziBatchInput) => ipcRenderer.invoke('ai:generateHotBaziBatch', input),
     regenerateHotBaziMedia: (taskIds: number[], mediaDir?: string) => ipcRenderer.invoke('ai:regenerateHotBaziMedia', taskIds, mediaDir),
+    listTodayTopicPeople: () => ipcRenderer.invoke('ai:listTodayTopicPeople'),
+    onHotBaziProgress: (callback: any) => {
+      const subscription = (_event: any, data: any) => callback(_event, data);
+      ipcRenderer.on('hot-bazi:progress', subscription);
+      return () => ipcRenderer.removeListener('hot-bazi:progress', subscription);
+    },
     previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any) => ipcRenderer.invoke('ai:previewWorkflow_v3', pluginCode, workflowCode, inputParams),
     startAgentSchedule: (accountId: number) => ipcRenderer.invoke('ai:startAgentSchedule', accountId),
     onWorkflowLog: (callback: any) => {

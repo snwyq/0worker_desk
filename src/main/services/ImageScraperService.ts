@@ -25,7 +25,10 @@ export class ImageScraperService {
   public async scrapeImages(keyword: string, limit = 2, mediaDir?: string): Promise<string[]> {
     const executablePath = await this.getPlaywrightExecutablePath();
     const browser = await chromium.launch({ executablePath, headless: true });
-    const context = await browser.newContext();
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      viewport: { width: 1280, height: 720 }
+    });
     const page = await context.newPage();
 
     const results: string[] = [];
@@ -35,65 +38,96 @@ export class ImageScraperService {
     }
 
     try {
-      // Bing Image Search with filters for aspect ratio and size (e.g. portrait/large)
-      const encodedKeyword = encodeURIComponent(`${keyword} 高清 个人照`);
-      await page.goto(`https://cn.bing.com/images/search?q=${encodedKeyword}&form=HDRSC2&first=1`, { 
-        waitUntil: 'domcontentloaded',
-        timeout: 60000 
-      });
+      // Helper function to scrape high-res ObjUrls from Baidu
+      const scrapeBaiduObjUrls = async (searchQuery: string) => {
+        console.log(`[ImageScraper] Searching Baidu for: ${searchQuery}`);
+        const encoded = encodeURIComponent(searchQuery);
+        await page.goto(`https://image.baidu.com/search/index?tn=baiduimage&word=${encoded}`, { 
+          waitUntil: 'domcontentloaded',
+          timeout: 30000 
+        });
+        await page.waitForTimeout(2000);
 
-      // Wait for images to load
-      await page.waitForSelector('.mimg', { timeout: 10000 }).catch(() => {});
+        return await page.evaluate(() => {
+          const html = document.documentElement.innerHTML;
+          const urls = [];
+          const regex = /"ObjUrl":"(.*?)"/gi;
+          let match;
+          while ((match = regex.exec(html)) !== null) {
+            urls.push(match[1]);
+          }
+          return urls;
+        });
+      };
 
-      // Extract image data
-      const imageElements = await page.$$('.mimg');
+      // 1. Primary Attempt: Try to find high-res images for the specific event
+      let highResUrls = await scrapeBaiduObjUrls(`${keyword} 高清`);
+
+      // 2. Fallback: If no event images, get ultra-high-res official portraits of the person
+      if (highResUrls.length === 0) {
+        const personName = keyword.split(' ')[0];
+        if (personName && personName !== keyword) {
+          console.log(`[ImageScraper] Event search returned 0 URLs. Falling back to portrait: ${personName}`);
+          highResUrls = await scrapeBaiduObjUrls(`${personName} 高清 写真`);
+        }
+      }
+
+      // Deduplicate
+      highResUrls = Array.from(new Set(highResUrls));
+      console.log(`[ImageScraper] Extracted ${highResUrls.length} original high-res candidate URLs.`);
+
       let savedCount = 0;
 
-      for (let i = 0; i < imageElements.length && savedCount < limit; i++) {
-        const src = await imageElements[i].getAttribute('src') || await imageElements[i].getAttribute('data-src');
-        if (!src || src.startsWith('data:')) continue; // Skip very low res embedded base64 thumbnails initially
+      for (let i = 0; i < highResUrls.length && savedCount < limit; i++) {
+        const highResUrl = highResUrls[i];
 
-        // For Bing, the actual high-res image is often inside an 'm' attribute on the parent 'a' tag
-        const parentA = await imageElements[i].evaluateHandle((el) => el.closest('a.iusc'));
-        let highResUrl = src;
-        if (parentA) {
-          const mAttr = await parentA.evaluate((el: any) => el.getAttribute('m'));
-          if (mAttr) {
-            try {
-              const mData = JSON.parse(mAttr);
-              if (mData.murl) {
-                highResUrl = mData.murl;
-              }
-            } catch (e) {}
-          }
-        }
-
-        // Domain blacklist check
+        // Domain blacklist check (skip stock photo sites with watermarks)
         if (DOMAIN_BLACKLIST.some(domain => highResUrl.toLowerCase().includes(domain))) {
           continue;
         }
 
         try {
-          const response = await fetch(highResUrl);
-          if (!response.ok) continue;
+          console.log(`[ImageScraper] Fetching original URL: ${highResUrl}`);
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000);
+          
+          const response = await fetch(highResUrl, { 
+            signal: controller.signal,
+            headers: { 
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Referer': 'https://image.baidu.com/' 
+            }
+          });
+          clearTimeout(timeoutId);
+          
+          if (!response.ok) {
+            continue;
+          }
 
           const buffer = Buffer.from(await response.arrayBuffer());
           
-          // Heuristic validation: file size must be > 30KB
-          if (buffer.length < 30 * 1024) continue;
+          // STRICT HIGH-RES VALIDATION: Must be > 40KB. 
+          // Original photos are usually 100KB - 5MB. This completely filters out blurry thumbnails.
+          if (buffer.length < 40 * 1024) {
+             console.log(`[ImageScraper] Skipped: Low resolution (${buffer.length} bytes)`);
+             continue;
+          }
+
+          console.log(`[ImageScraper] Downloaded high-res image: ${buffer.length} bytes`);
 
           // Save to disk
           const hash = crypto.createHash('md5').update(highResUrl).digest('hex').substring(0, 8);
-          const ext = highResUrl.split('?')[0].split('.').pop()?.toLowerCase() || 'jpg';
-          const validExt = ['jpg', 'jpeg', 'png', 'webp'].includes(ext) ? ext : 'jpg';
-          const fileName = `${keyword}_${hash}.${validExt}`;
+          const ext = 'jpg'; 
+          const safeKeyword = keyword.replace(/[\/\?<>\\:\*\|":#%\s]/g, '_').trim();
+          const fileName = `${safeKeyword}_${hash}.${ext}`;
           const filePath = path.join(targetDir, fileName);
 
           fs.writeFileSync(filePath, buffer);
           results.push(filePath);
           savedCount++;
+          console.log(`[ImageScraper] Successfully saved: ${filePath}`);
         } catch (e) {
-          // Ignore download errors
+          // Silent catch for individual fetch failures (timeout, 403, etc.), just move to next candidate
         }
       }
     } catch (error) {

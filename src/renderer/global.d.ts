@@ -1,4 +1,4 @@
-import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AnalyzeHotPeopleInput, AnalyzeHotPeopleResult, AppSetting, ConnectionTestResult, ContentItem, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DispatchSimulationEntry, DistributionTask, GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotBaziTask, HotPerson, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, SourceColumn, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput, PublishingStrategy, CreatePublishingStrategyInput, UpdatePublishingStrategyInput } from '../shared/types';
+import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AnalyzeHotPeopleInput, AnalyzeHotPeopleResult, AppSetting, ConnectionTestResult, ContentItem, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DispatchSimulationEntry, DistributionTask, GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotBaziTask, HotPerson, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, SourceColumn, TopicPersonPair, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput, PublishingStrategy, CreatePublishingStrategyInput, UpdatePublishingStrategyInput } from '../shared/types';
 
 declare global {
   interface Window {
@@ -119,6 +119,8 @@ declare global {
         analyzeHotPeople: (input?: AnalyzeHotPeopleInput) => Promise<AnalyzeHotPeopleResult>;
         generateHotBaziBatch?: (input: GenerateHotBaziBatchInput) => Promise<GenerateHotBaziBatchResult>;
         regenerateHotBaziMedia?: (taskIds: number[], mediaDir?: string) => Promise<{ successCount: number; totalRequested: number }>;
+        listTodayTopicPeople?: () => Promise<TopicPersonPair[]>;
+        onHotBaziProgress?: (callback: (event: any, data: any) => void) => (() => void);
         previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any) => Promise<{ runId: string }>;
         startAgentSchedule: (accountId: number) => Promise<{ ok: boolean; message: string }>;
         onWorkflowLog: (callback: (log: any) => void) => (() => void);

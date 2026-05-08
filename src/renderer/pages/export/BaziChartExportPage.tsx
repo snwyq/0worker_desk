@@ -114,31 +114,64 @@ export function BaziChartExportPage() {
     if (isFemale) {
       return fullName.length >= 3 ? `${surname}某某女士` : `${surname}某女士`;
     } else {
-      return `${surname}先生`;
+      return fullName.length >= 3 ? `${surname}某某先生` : `${surname}某先生`;
     }
   };
 
   const maskedName = getMaskedName(data.fullName, data.gender);
+
+  // 全局真名脱敏函数：防止 AI 大模型生成的长文中直呼其名
+  const sanitizeName = (text: string) => {
+    if (!text || typeof text !== 'string' || !data.fullName) return text;
+    return text.split(data.fullName).join(maskedName);
+  };
+
+  // 极致兜底与数据提纯逻辑
+  const rawParagraphs = data.paragraphs || [];
+  const validParagraphs = rawParagraphs.filter((p: string) => p && typeof p === 'string' && p.trim().length > 0);
+  const finalParagraphsToRender = validParagraphs.length > 0 
+    ? validParagraphs.map(sanitizeName)
+    : [data.chartAnalysis, data.luckAnalysis]
+        .filter((p: string) => p && typeof p === 'string' && p.trim().length > 0)
+        .map(sanitizeName);
+
+  // 重构：专门为微博九宫格防裁剪设计的【下沉式居中海报横幅】
+  const HeroHeader = ({ subtitle }: { subtitle: string }) => (
+    <div className="tw-pt-[160px] tw-px-[40px] tw-mb-[40px] tw-w-full">
+      <div className="tw-bg-gradient-to-br tw-from-[#003366] tw-to-[#00152b] tw-py-[80px] tw-px-[40px] tw-rounded-2xl tw-shadow-[0_20px_40px_rgba(0,51,102,0.15)] tw-flex tw-flex-col tw-items-center tw-justify-center tw-relative tw-overflow-hidden">
+         <div className="tw-absolute tw-text-[#ffffff] tw-opacity-[0.03] tw-font-black tw-text-[240px] tw-whitespace-nowrap tw-select-none tw-top-1/2 tw-transform -tw-translate-y-1/2" style={{ fontFamily: 'STZhongsong, STSong, serif' }}>
+           {maskedName}
+         </div>
+         <div className="tw-relative tw-z-10 tw-text-[#f5d996] tw-text-[90px] tw-font-black tw-tracking-[0.1em] tw-mb-[24px] tw-leading-none" style={{ fontFamily: 'STZhongsong, STSong, serif' }}>
+           {maskedName}
+         </div>
+         <div className="tw-relative tw-z-10 tw-flex tw-items-center tw-gap-[24px]">
+            <span className="tw-w-[60px] tw-h-[3px] tw-bg-[#B08D57]"></span>
+            <span className="tw-text-[36px] tw-text-[#f5d996] tw-tracking-widest tw-font-bold tw-opacity-90">
+              {subtitle}
+            </span>
+            <span className="tw-w-[60px] tw-h-[3px] tw-bg-[#B08D57]"></span>
+         </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="tw-fixed tw-inset-0 tw-bg-white tw-z-[9999] tw-overflow-auto">
       <div className="tw-flex tw-flex-col tw-bg-[#f7f7f7]">
       {/* -------------------- Part 1: 四柱排盘 -------------------- */}
       <div id="bazi-part-1" className="tw-flex tw-flex-col tw-w-[1080px] tw-relative tw-bg-[#f7f7f7] tw-overflow-hidden tw-mx-auto" style={{ minHeight: '1080px', boxSizing: 'border-box' }}>
-        <div className="tw-h-[6px] tw-w-full tw-bg-[#F8F9FA] tw-mb-[40px]"></div>
-        
-        <div className="tw-px-[40px]">
-          <div className="tw-text-[44px] tw-font-black tw-mb-[40px] tw-text-[#1a1a1a] tw-text-center tw-w-full">依公开生日解读核心干支</div>
-          <div className="tw-bg-[#ffffff] tw-border-l-[12px] tw-border-[#003366] tw-py-[32px] tw-px-[40px] tw-rounded-r-xl tw-shadow-sm">
-            <div className="tw-flex tw-items-center tw-mb-[12px]">
-              <span className="tw-text-[42px] tw-font-black tw-text-[#1a1a1a]">{maskedName}</span>
-            </div>
-            <div className="tw-text-[22px] tw-text-[#999] tw-mb-[16px]">排盘刻度基准时间 / {data.dateStr}</div>
-            {data.chartAnalysis && data.chartAnalysis !== '命局解析' && (
-              <div className="tw-text-[26px] tw-font-bold tw-text-[#333] tw-leading-relaxed">{data.chartAnalysis}</div>
-            )}
-          </div>
+        <HeroHeader subtitle="核心排盘数据" />
+        <div className="tw-px-[40px] tw-mb-[32px] tw-text-center">
+           <span className="tw-text-[24px] tw-text-[#666] tw-bg-white tw-px-[24px] tw-py-[8px] tw-rounded-full tw-shadow-sm">排盘基准时间：{data.dateStr}</span>
         </div>
+        {data.chartAnalysis && data.chartAnalysis !== '命局解析' && (
+          <div className="tw-px-[40px] tw-mb-[40px]">
+            <div className="tw-bg-[#ffffff] tw-border-l-[8px] tw-border-[#003366] tw-py-[24px] tw-px-[32px] tw-rounded-r-xl tw-shadow-sm">
+               <div className="tw-text-[26px] tw-font-bold tw-text-[#333] tw-leading-relaxed">{sanitizeName(data.chartAnalysis)}</div>
+            </div>
+          </div>
+        )}
 
         <div className="tw-flex tw-w-full tw-px-[40px] tw-mt-[40px] tw-mb-[20px] tw-gap-2">
           {allPillars.map((pillar: any) => (
@@ -235,7 +268,7 @@ export function BaziChartExportPage() {
 
       {/* -------------------- Part 2: 大运解析 -------------------- */}
       <div id="bazi-part-2" className="tw-flex tw-flex-col tw-w-[1080px] tw-relative tw-bg-[#f7f7f7] tw-mx-auto" style={{ minHeight: '1080px', boxSizing: 'border-box' }}>
-        <div className="tw-h-[6px] tw-w-full tw-bg-[#F8F9FA] tw-mb-[40px]"></div>
+        <HeroHeader subtitle="大运人生复盘" />
 
         {daYunList && daYunList.length > 0 && (
           <div className="tw-py-[24px] tw-px-[40px] tw-flex-1 tw-flex tw-flex-col tw-w-full" style={{ boxSizing: 'border-box' }}>
@@ -332,7 +365,7 @@ export function BaziChartExportPage() {
 
       {/* -------------------- Part 3: 流年概览 -------------------- */}
       <div id="bazi-part-3" className="tw-flex tw-flex-col tw-w-[1080px] tw-relative tw-bg-[#f7f7f7] tw-mx-auto" style={{ minHeight: '1080px', boxSizing: 'border-box' }}>
-        <div className="tw-h-[6px] tw-w-full tw-bg-[#F8F9FA] tw-mb-[40px]"></div>
+        <HeroHeader subtitle="近期流年推演" />
 
         {currentYearAnalysis && (
           <div className="tw-py-[24px] tw-px-[40px] tw-flex-1 tw-flex tw-flex-col tw-w-full" style={{ boxSizing: 'border-box' }}>
@@ -410,6 +443,56 @@ export function BaziChartExportPage() {
           </div>
         )}
       </div>
+
+      {/* -------------------- Part 4: AI 命理断言长文 -------------------- */}
+      <div id="bazi-part-4" className="tw-flex tw-flex-col tw-w-[1080px] tw-relative tw-bg-[#f7f7f7] tw-mx-auto" style={{ boxSizing: 'border-box' }}>
+        <HeroHeader subtitle="运势深度揭秘" />
+
+        {finalParagraphsToRender.length > 0 && (
+          <div className="tw-py-[24px] tw-px-[40px] tw-flex-1 tw-flex tw-flex-col tw-w-full" style={{ boxSizing: 'border-box' }}>
+            <div className="tw-bg-[#ffffff] tw-border tw-border-[#e5e5e5] tw-rounded-2xl tw-p-[40px] tw-shadow-sm tw-flex-1">
+              <div className="tw-flex tw-flex-col tw-space-y-[32px]">
+                {finalParagraphsToRender.reduce((acc: string[], curr: string) => {
+                  const subParas = curr.split('\n').map(p => p.trim()).filter(p => p.length > 0);
+                  acc.push(...subParas);
+                  return acc;
+                }, []).map((para: string, idx: number) => {
+                  const isHighlight = /^(阶段|20\d{2}|[甲乙丙丁戊己庚辛壬癸][子丑寅卯辰巳午未申酉戌亥])/.test(para);
+                  
+                  if (idx === 0) {
+                    return (
+                      <div key={idx} className="tw-bg-gradient-to-r tw-from-[#003366] tw-to-[#002244] tw-text-[#f5d996] tw-p-[40px] tw-rounded-2xl tw-shadow-xl tw-relative tw-z-10 tw-my-[20px]">
+                         <span className="tw-text-[48px] tw-font-black tw-leading-snug tw-tracking-widest">
+                           {para}
+                         </span>
+                      </div>
+                    );
+                  }
+                  
+                  return (
+                    <div key={idx} className="tw-text-[26px] tw-leading-relaxed tw-text-[#333] tw-text-justify tw-tracking-wide">
+                      {isHighlight ? (
+                        <span className="tw-font-black tw-text-[#003366] tw-block tw-mb-2">{para}</span>
+                      ) : (
+                        <span className="tw-font-medium">{para}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="tw-mt-auto tw-pt-[80px] tw-mb-[40px] tw-w-full">
+              <div className="tw-w-full tw-h-[1px] tw-bg-[#e5e5e5] tw-mb-[30px]"></div>
+              <div className="tw-flex tw-items-center tw-justify-between">
+                <span className="tw-text-[20px] tw-text-[#888] tw-font-bold tw-tracking-widest">数据来源于解盘软件，仅供参考</span>
+                <span className="tw-text-[20px] tw-text-[#bba371] tw-font-bold tw-tracking-widest">扫码测算专属流年运势 👇</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
     </div>
   </div>
   );

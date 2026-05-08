@@ -574,6 +574,9 @@ export interface GenerateHotBaziBatchInput {
   model?: 'qwen3.5-plus' | 'deepseek-v3.2' | 'kimi-k2.5';
   limit?: number;
   mediaDir?: string;
+  workflowCode?: string;
+  /** 选择性生成：只处理指定的热点×人物配对。为空则处理全部待生成配对。 */
+  selectedPairs?: Array<{ personId: number; topicTitle: string }>;
 }
 
 export interface GenerateHotBaziBatchResult {
@@ -585,4 +588,30 @@ export interface GenerateHotBaziBatchResult {
   taskIds: number[];
   contentIds: number[];
   errors: string[];
+}
+
+/** 今日热点×人物配对（用于工作站主列表展示） */
+export interface TopicPersonPair {
+  analysisId: number;
+  hotTopicId: number;
+  topicTitle: string;
+  topicPlatform: string;
+  hotValue: string;
+  hotValueNum: number;
+  personName: string;
+  personId: number;
+  birthday: string;
+  sizhu: string;
+  gender: string;
+}
+
+/** 生成进度事件（逐条推送） */
+export interface HotBaziProgressEvent {
+  index: number;
+  total: number;
+  personName: string;
+  topicTitle: string;
+  ok: boolean;
+  error?: string;
+  status?: string;
 }

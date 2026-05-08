@@ -75,13 +75,15 @@ export class LocalChartRenderer {
         const performCapture = async () => {
           try {
             const results: string[] = [];
-            const parts = ['bazi-part-1', 'bazi-part-2', 'bazi-part-3'];
+            // 调整图片生成顺序：AI长文(4)作为首图最能吸引网民，将最硬核生涩的排盘(1)放到最后。
+            // 顺序：长文 -> 大运 -> 流年 -> 排盘
+            const parts = ['bazi-part-4', 'bazi-part-2', 'bazi-part-3', 'bazi-part-1'];
 
             for (const partId of parts) {
               // 1. 先把所有部分隐藏，只显示当前要截的部分
               await win.webContents.executeJavaScript(`
                 (function() {
-                  ['bazi-part-1', 'bazi-part-2', 'bazi-part-3'].forEach(id => {
+                  ['bazi-part-1', 'bazi-part-2', 'bazi-part-3', 'bazi-part-4'].forEach(id => {
                     const el = document.getElementById(id);
                     if (el) el.style.display = (id === '${partId}') ? 'flex' : 'none';
                   });
