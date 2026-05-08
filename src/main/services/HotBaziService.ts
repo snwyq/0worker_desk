@@ -45,16 +45,16 @@ function getDefaultPromptTemplate() {
     '【严格文章结构】',
     '第一行（独占一行）：#{{sourceTopic}}#',
     '',
-    '第一段（约40字，格局定位）：首句必须直接写出“{{personName}}”的名字。随后简明扼要地给出其八字排盘、格局定性及五行喜忌分析。',
+    '第一段（约40字，格局定位）：必须以【命局提要】开头。首句直接写出“{{personName}}”的名字，随后简明给出其格局定性及五行喜忌分析。',
     '',
     '第二段（大运与真实经历对应，重点段落）：',
-    '要求：短句为主，不要把分析和经历混在超长句中；真实经历的字数必须多于命理分析。',
-    '阶段一：先写1句重点大运或年份的命理判断，紧接2到3句其在该阶段真实的经历变化。',
-    '阶段二：必须换行另起，再写1句下一个大运的命理判断，紧接2到3句对应的真实经历。',
+    '要求：短句为主；真实经历的字数必须多于纯命理术语。',
+    '阶段一：必须以【大运复盘】开头。先写1句重点大运或年份的命理判断，紧接2到3句在该阶段真实的经历变化。',
+    '阶段二：必须换行另起，写1句下一个大运的命理判断，紧接2到3句对应的真实经历。',
     '',
-    '第三段（综合论断）：整体评析大运走势，直接点明这套八字组合及运势对该人物在事业、家庭、感情、健康上的实质性影响。',
+    '第三段（综合论断）：必须以【核心断言】开头。直接点明这套八字对该人物在事业、家庭、健康上的实质性影响。',
     '',
-    '第四段（流年推断）：补充断定{{currentYear}}年（{{currentYearGanzhi}}）和{{nextYear}}年（{{nextYearGanzhi}}）的流年八字与流年的组合特点，并直言预测这两年可能发生的具体事情或特点。',
+    '第四段（流年推断）：必须以【近期流年】开头。推断{{currentYear}}年（{{currentYearGanzhi}}）和{{nextYear}}年（{{nextYearGanzhi}}）可能发生的具体事情。',
   ].join('\n');
 }
 
@@ -244,8 +244,8 @@ export class HotBaziService {
           continue;
         }
 
-        // 核心修复：先安全剥离首部的 #话题名# 标签，防止由于大段落没换行导致被整体过滤
-        const cleanBody = body.replace(/^#.*?#\s*/, '').replace(/^[#*]+\s*/gm, ''); 
+        // 核心修复：先安全剥离首部的 #话题名# 标签
+        const cleanBody = body.replace(/^#.*?#\s*/, ''); 
         const paragraphs = cleanBody.split(/\r?\n|\\n/).map(p => p.trim()).filter(p => p.length > 0);
         const chartAnalysis = paragraphs[0] || '命理格局提取失败';
         const luckAnalysis = paragraphs[paragraphs.length - 1] || '流年断语提取失败';
@@ -346,7 +346,7 @@ export class HotBaziService {
       const contentItem = this.db.contentItems.findById(task.contentId);
       const rawBody = contentItem?.body || '';
       // 核心修复：保持与主流程一致的健壮清洗逻辑，防止老数据切分出空数组
-      const cleanBody = rawBody.replace(/^#.*?#\s*/, '').replace(/^[#*]+\s*/gm, '');
+      const cleanBody = rawBody.replace(/^#.*?#\s*/, '');
       const paragraphs = cleanBody.split(/\r?\n|\\n/).map((p: string) => p.trim()).filter((p: string) => p.length > 0);
       const generatedContentObj = {
         chartAnalysis: paragraphs[0] || '命理格局解析',

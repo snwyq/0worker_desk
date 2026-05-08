@@ -236,20 +236,17 @@ export function useHotBaziPipeline() {
       if (globalCancelled) throw new Error('USER_CANCELLED');
 
       // ===== Step 4: 自动送调度 =====
-      if (config.autoEnqueue && generateResult.createdTaskIds.length > 0) {
+      if (config.autoEnqueue && generateResult.taskIds.length > 0) {
         setGlobalState(prev => ({ ...prev, stage: 'enqueueing', currentMessage: '正在自动送入调度...', progress: 90 }));
 
-        await appApi.hotBaziTasks.batchUpdateStatus({
-          taskIds: generateResult.createdTaskIds,
-          status: 'queued',
-        });
+        await appApi.hotBaziTasks.enqueueMany(generateResult.taskIds);
         setGlobalState(prev => ({
           ...prev,
           steps: {
             ...prev.steps,
             enqueue: {
               ok: true,
-              message: `已自动调度 ${generateResult.createdTaskIds.length} 条内容`,
+              message: `已自动调度 ${generateResult.taskIds.length} 条内容`,
               skipped: false,
             },
           },

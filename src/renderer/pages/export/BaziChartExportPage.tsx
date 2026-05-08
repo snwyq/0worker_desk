@@ -135,6 +135,82 @@ export function BaziChartExportPage() {
         .filter((p: string) => p && typeof p === 'string' && p.trim().length > 0)
         .map(sanitizeName);
 
+  const renderBold = (str: string) => {
+    const parts = str.split(/(\*\*.*?\*\*)/g);
+    return parts.map((part, i) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <span key={i} className="tw-font-black tw-text-[#1a1a1a]">{part.slice(2, -2)}</span>;
+      }
+      return <span key={i} className="tw-font-medium">{part}</span>;
+    });
+  };
+
+  const MarkdownLine = ({ text }: { text: string }) => {
+    const isHighlight = /^(阶段|20\d{2}|[甲乙丙丁戊己庚辛壬癸][子丑寅卯辰巳午未申酉戌亥])/.test(text);
+
+    // 解析 【小标题】 格式
+    const bracketMatch = text.match(/^【(.*?)】(.*)/);
+    if (bracketMatch) {
+      const title = bracketMatch[1].trim();
+      const content = bracketMatch[2].trim();
+      return (
+        <div className="tw-mb-[24px]">
+          <div className="tw-mt-[48px] tw-mb-[16px] tw-flex tw-items-center">
+            <div className="tw-w-[8px] tw-h-[28px] tw-bg-[#003366] tw-rounded-full tw-mr-[16px]"></div>
+            <span className="tw-text-[34px] tw-font-black tw-text-[#003366] tw-tracking-widest">{title}</span>
+          </div>
+          {content && (
+            <div className="tw-text-[26px] tw-leading-[1.8] tw-text-[#333] tw-text-justify tw-tracking-wide">
+              {renderBold(content)}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (text.startsWith('### ') || text.startsWith('## ') || text.startsWith('# ')) {
+      const content = text.replace(/^#+\s*/, '');
+      return (
+        <div className="tw-mt-[48px] tw-mb-[24px] tw-flex tw-items-center">
+          <div className="tw-w-[8px] tw-h-[28px] tw-bg-[#003366] tw-rounded-full tw-mr-[16px]"></div>
+          <span className="tw-text-[34px] tw-font-black tw-text-[#003366] tw-tracking-widest">{renderBold(content)}</span>
+        </div>
+      );
+    }
+  
+    if (/^[-*]\s+/.test(text)) {
+      const content = text.replace(/^[-*]\s+/, '');
+      return (
+        <div className="tw-flex tw-items-start tw-mb-[20px] tw-pl-[24px]">
+          <div className="tw-w-[8px] tw-h-[8px] tw-bg-[#B08D57] tw-rounded-full tw-mt-[16px] tw-mr-[16px] tw-flex-shrink-0"></div>
+          <div className="tw-text-[26px] tw-leading-[1.8] tw-text-[#333] tw-text-justify">{renderBold(content)}</div>
+        </div>
+      );
+    }
+    
+    if (/^\d+\.\s+/.test(text)) {
+      const match = text.match(/^(\d+)\.\s+(.*)/);
+      if (match) {
+        return (
+          <div className="tw-flex tw-items-start tw-mb-[20px] tw-pl-[12px]">
+            <div className="tw-text-[26px] tw-font-black tw-text-[#003366] tw-w-[48px] tw-flex-shrink-0 tw-mt-[2px]">{match[1]}.</div>
+            <div className="tw-text-[26px] tw-leading-[1.8] tw-text-[#333] tw-text-justify">{renderBold(match[2])}</div>
+          </div>
+        );
+      }
+    }
+  
+    return (
+      <div className="tw-text-[26px] tw-leading-[1.8] tw-text-[#333] tw-text-justify tw-tracking-wide tw-mb-[24px]">
+        {isHighlight ? (
+          <span className="tw-font-black tw-text-[#003366] tw-block tw-mb-2">{renderBold(text)}</span>
+        ) : (
+          renderBold(text)
+        )}
+      </div>
+    );
+  };
+
   // 重构：专门为微博九宫格防裁剪设计的【下沉式居中海报横幅】
   const HeroHeader = ({ subtitle }: { subtitle: string }) => (
     <div className="tw-pt-[160px] tw-px-[40px] tw-mb-[40px] tw-w-full">
@@ -445,39 +521,30 @@ export function BaziChartExportPage() {
       </div>
 
       {/* -------------------- Part 4: AI 命理断言长文 -------------------- */}
-      <div id="bazi-part-4" className="tw-flex tw-flex-col tw-w-[1080px] tw-relative tw-bg-[#f7f7f7] tw-mx-auto" style={{ boxSizing: 'border-box' }}>
+      <div id="bazi-part-4" className="tw-flex tw-flex-col tw-w-[1080px] tw-relative tw-bg-[#f7f7f7] tw-mx-auto" style={{ minHeight: '1080px', boxSizing: 'border-box' }}>
         <HeroHeader subtitle="运势深度揭秘" />
 
         {finalParagraphsToRender.length > 0 && (
           <div className="tw-py-[24px] tw-px-[40px] tw-flex-1 tw-flex tw-flex-col tw-w-full" style={{ boxSizing: 'border-box' }}>
             <div className="tw-bg-[#ffffff] tw-border tw-border-[#e5e5e5] tw-rounded-2xl tw-p-[40px] tw-shadow-sm tw-flex-1">
-              <div className="tw-flex tw-flex-col tw-space-y-[32px]">
+              <div className="tw-flex tw-flex-col tw-w-full">
                 {finalParagraphsToRender.reduce((acc: string[], curr: string) => {
                   const subParas = curr.split('\n').map(p => p.trim()).filter(p => p.length > 0);
                   acc.push(...subParas);
                   return acc;
                 }, []).map((para: string, idx: number) => {
-                  const isHighlight = /^(阶段|20\d{2}|[甲乙丙丁戊己庚辛壬癸][子丑寅卯辰巳午未申酉戌亥])/.test(para);
-                  
                   if (idx === 0) {
+                    const title = para.replace(/^#+\s*/, '').replace(/\*\*/g, '');
                     return (
-                      <div key={idx} className="tw-bg-gradient-to-r tw-from-[#003366] tw-to-[#002244] tw-text-[#f5d996] tw-p-[40px] tw-rounded-2xl tw-shadow-xl tw-relative tw-z-10 tw-my-[20px]">
-                         <span className="tw-text-[48px] tw-font-black tw-leading-snug tw-tracking-widest">
-                           {para}
+                      <div key={idx} className="tw-bg-gradient-to-r tw-from-[#003366] tw-to-[#002244] tw-text-[#f5d996] tw-p-[40px] tw-rounded-2xl tw-shadow-xl tw-relative tw-z-10 tw-mb-[40px]">
+                         <span className="tw-text-[42px] tw-font-black tw-leading-snug tw-tracking-widest">
+                           {title}
                          </span>
                       </div>
                     );
                   }
                   
-                  return (
-                    <div key={idx} className="tw-text-[26px] tw-leading-relaxed tw-text-[#333] tw-text-justify tw-tracking-wide">
-                      {isHighlight ? (
-                        <span className="tw-font-black tw-text-[#003366] tw-block tw-mb-2">{para}</span>
-                      ) : (
-                        <span className="tw-font-medium">{para}</span>
-                      )}
-                    </div>
-                  );
+                  return <MarkdownLine key={idx} text={para} />;
                 })}
               </div>
             </div>
