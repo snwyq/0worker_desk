@@ -11,3 +11,5 @@ release/
 .vscode/
 .idea/
 out/
+media_assets/
+scratch/
