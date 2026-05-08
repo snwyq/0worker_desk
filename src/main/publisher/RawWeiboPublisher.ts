@@ -393,7 +393,8 @@ async function readSendStatus(client: RawCdpClient, expectedMediaCount = 0) {
       const textarea = findComposeTextarea();
       const remainingText = (textarea?.value || '').trim();
       const sendButton = findSendButton();
-      const pageText = document.body.innerText || '';
+      const container = getComposeContainer();
+      const pageText = container.innerText || '';
       const uploading = hasWeiboUploadingText(pageText);
       const sendStatus = getSendButtonStatusFromDom(toElementSnapshot(sendButton));
       const mediaState = readWeiboMediaState();
@@ -635,7 +636,8 @@ async function verifySendClick(client: RawCdpClient) {
       const textarea = findComposeTextarea();
       const remainingText = (textarea?.value || '').trim();
       const sendButton = findSendButton();
-      const pageText = document.body.innerText || '';
+      const container = getComposeContainer();
+      const pageText = container.innerText || '';
       const sendButtonDisabled = getSendButtonStatusFromDom(toElementSnapshot(sendButton)).disabled;
       const hasUploadingText = hasWeiboUploadingText(pageText);
 
@@ -696,9 +698,22 @@ function weiboDomRuntimeHelpers() {
       const style = window.getComputedStyle(el);
       return Boolean(rect && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden');
     };
+    const getComposeContainer = () => {
+      const textarea = findComposeTextarea();
+      const sendBtn = findSendButton();
+      if (textarea && sendBtn) {
+         let parent = textarea.parentElement;
+         while (parent && !parent.contains(sendBtn)) {
+            parent = parent.parentElement;
+         }
+         if (parent) return parent;
+      }
+      return textarea ? (textarea.closest('[class*="Compose"]') || document.body) : document.body;
+    };
     const readWeiboMediaState = () => {
+      const container = getComposeContainer();
       const loadingSelectors = '.woo-icon-loading, .woo-spinner, .Pic_loading_13r6n, [class*="loading"], [class*="Loading"]';
-      const loadingCount = [...document.querySelectorAll(loadingSelectors)].filter(isVisibleElement).length;
+      const loadingCount = [...container.querySelectorAll(loadingSelectors)].filter(isVisibleElement).length;
       const previewSelectors = [
         '.woo-picture-img',
         '.woo-picture-main',
@@ -711,7 +726,7 @@ function weiboDomRuntimeHelpers() {
         'img[src*="sinaimg.cn"]',
         'img[src*="weibocdn.com"]',
       ].join(',');
-      const previews = [...document.querySelectorAll(previewSelectors)]
+      const previews = [...container.querySelectorAll(previewSelectors)]
         .filter((el) => {
           if (!isVisibleElement(el)) return false;
           const text = (el.innerText || el.textContent || '').trim();

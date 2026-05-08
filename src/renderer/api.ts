@@ -662,6 +662,14 @@ export const appApi = {
         body: JSON.stringify({ taskIds, mediaDir }),
       });
     },
+    getHotBaziDefaultPrompt: async (): Promise<string> => {
+      if (window.weiboPublisher?.ai?.getHotBaziDefaultPrompt) {
+        const result = await window.weiboPublisher.ai.getHotBaziDefaultPrompt();
+        return result.prompt;
+      }
+      const result = await httpJson<{ prompt: string }>('/ai/hot-bazi/default-prompt');
+      return result.prompt;
+    },
     previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any): Promise<{ runId: string }> => {
       if (window.weiboPublisher?.ai) {
         return window.weiboPublisher.ai.previewWorkflow(pluginCode, workflowCode, inputParams);

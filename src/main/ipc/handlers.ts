@@ -13,7 +13,7 @@ import { WeiboPublisher } from '../publisher/WeiboPublisher.js';
 import { listPlatformCapabilities } from '../platforms/registry.js';
 import { checkForUpdates, readUpdateConfig } from '../updater/UpdateService.js';
 import { AiService, aiService, type AiGenerateOptions, type AiImageOptions } from '../services/AiService.js';
-import { hotBaziService } from '../services/HotBaziService.js';
+import { hotBaziService, getDefaultPromptTemplate } from '../services/HotBaziService.js';
 import { hotPeopleService } from '../services/HotPeopleService.js';
 import { getWorkflowEngine } from '../core/workflow/EngineRegistry.js';
 import { createWorkflowRunner } from '../core/workflow/EngineRegistry.js';
@@ -448,6 +448,7 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
     });
   });
   ipcMain.handle('ai:regenerateHotBaziMedia', (_event, taskIds: number[], mediaDir?: string) => hotBaziService.regenerateMediaForTasks(taskIds, mediaDir));
+  ipcMain.handle('ai:getHotBaziDefaultPrompt', () => ({ prompt: getDefaultPromptTemplate() }));
   ipcMain.handle('ai:startAgentSchedule', async (_event, accountId: number) => {
     // In production, this would register a node-cron job or an interval.
     return { ok: true, message: `Scheduled agent for account ${accountId}` };
@@ -1090,6 +1091,11 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
       if (request.method === 'POST' && requestUrl.pathname === '/ai/hot-bazi/regenerate-media') {
         const input = await readBody(request) as { taskIds: number[], mediaDir?: string };
         sendJson(request, response, 200, await hotBaziService.regenerateMediaForTasks(input.taskIds, input.mediaDir));
+        return;
+      }
+
+      if (request.method === 'GET' && requestUrl.pathname === '/ai/hot-bazi/default-prompt') {
+        sendJson(request, response, 200, { prompt: getDefaultPromptTemplate() });
         return;
       }
 

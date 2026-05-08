@@ -119,6 +119,7 @@ declare global {
         analyzeHotPeople: (input?: AnalyzeHotPeopleInput) => Promise<AnalyzeHotPeopleResult>;
         generateHotBaziBatch?: (input: GenerateHotBaziBatchInput) => Promise<GenerateHotBaziBatchResult>;
         regenerateHotBaziMedia?: (taskIds: number[], mediaDir?: string) => Promise<{ successCount: number; totalRequested: number }>;
+        getHotBaziDefaultPrompt?: () => Promise<{ prompt: string }>;
         listTodayTopicPeople?: () => Promise<TopicPersonPair[]>;
         onHotBaziProgress?: (callback: (event: any, data: any) => void) => (() => void);
         previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any) => Promise<{ runId: string }>;

@@ -78,7 +78,7 @@ export const PublishingStrategyCard: React.FC<PublishingStrategyCardProps> = ({
       {/* Header */}
       <div className="tw-px-8 tw-py-6 tw-bg-slate-50/50 tw-border-b tw-border-slate-50 tw-flex tw-items-center tw-justify-between">
         <div className="tw-flex tw-items-center tw-gap-3">
-          <div className="tw-w-10 tw-h-10 tw-bg-slate-900 tw-text-white tw-rounded-2xl tw-flex tw-items-center tw-justify-center">
+          <div className="tw-w-10 tw-h-10 tw-bg-gradient-to-br tw-from-slate-50 tw-to-slate-100 tw-text-slate-600 tw-rounded-2xl tw-flex tw-items-center tw-justify-center tw-border tw-border-slate-200/50 tw-shadow-sm">
             <Settings2 size={20} />
           </div>
           <div>
@@ -175,7 +175,7 @@ export const PublishingStrategyCard: React.FC<PublishingStrategyCardProps> = ({
             </div>
             <button 
               onClick={handleAddRange}
-              className="tw-flex tw-items-center tw-gap-1.5 tw-px-3 tw-py-1.5 tw-bg-slate-900 tw-text-white tw-text-[10px] tw-font-black tw-rounded-xl hover:tw-bg-brand-600 tw-transition-all"
+              className="tw-flex tw-items-center tw-gap-1.5 tw-px-3 tw-py-1.5 tw-bg-slate-50 tw-text-slate-600 hover:tw-bg-brand-50 hover:tw-text-brand-600 tw-text-[10px] tw-font-black tw-rounded-xl tw-transition-all tw-border tw-border-slate-200/60 hover:tw-border-brand-200"
             >
               <Plus size={12} />
               新增时段
@@ -222,8 +222,10 @@ export const PublishingStrategyCard: React.FC<PublishingStrategyCardProps> = ({
         <button 
           onClick={onSave}
           disabled={isSaving}
-          className="tw-w-full tw-flex tw-items-center tw-justify-center tw-gap-3 tw-py-4 tw-bg-slate-900 tw-text-white tw-rounded-2xl tw-text-sm tw-font-black tw-shadow-xl tw-shadow-slate-200 hover:tw-bg-brand-600 tw-transition-all active:tw-scale-[0.98] disabled:tw-opacity-50"
+          className="tw-w-full tw-relative tw-overflow-hidden tw-group tw-flex tw-items-center tw-justify-center tw-gap-3 tw-py-4 tw-bg-gradient-to-r tw-from-slate-800 tw-to-slate-900 tw-text-white tw-rounded-[20px] tw-text-sm tw-font-black tw-shadow-xl tw-shadow-slate-200/50 hover:tw-shadow-2xl hover:tw-shadow-brand-500/20 tw-transition-all tw-duration-500 active:tw-scale-[0.98] disabled:tw-opacity-50"
         >
+          <div className="tw-absolute tw-inset-0 tw-bg-gradient-to-r tw-from-brand-500 tw-to-brand-600 tw-opacity-0 group-hover:tw-opacity-100 tw-transition-opacity tw-duration-500" />
+          <div className="tw-relative tw-z-10 tw-flex tw-items-center tw-gap-2">
           {isSaving ? (
             <div className="tw-w-4 tw-h-4 tw-border-2 tw-border-white/20 tw-border-t-white tw-rounded-full tw-animate-spin" />
           ) : (
@@ -232,6 +234,7 @@ export const PublishingStrategyCard: React.FC<PublishingStrategyCardProps> = ({
               保存当前栏目策略
             </>
           )}
+          </div>
         </button>
 
         <Interpreter strategy={strategy} />

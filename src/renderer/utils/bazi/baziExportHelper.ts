@@ -400,6 +400,7 @@ export function extractAndPaipan(text: string, person: any, generatedContent: an
     wuxing: `${bazi.getYearWuXing()} ${bazi.getMonthWuXing()} ${bazi.getDayWuXing()} ${bazi.getTimeWuXing()}`,
     chartAnalysis: generatedContent?.chartAnalysis || generatedContent?.bazi_analysis || '',
     luckAnalysis: generatedContent?.luckAnalysis || generatedContent?.luck_analysis || '',
+    paragraphs: generatedContent?.paragraphs || [],
     daYunList,
     currentYearAnalysis
   };

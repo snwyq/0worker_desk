@@ -302,7 +302,10 @@ export function QueuePage() {
     if (busyTaskId) return;
     setBusyTaskId(task.id);
     try {
-      await appApi.distributionTasks.publishNow(task.id);
+      const result = await appApi.distributionTasks.publishNow(task.id);
+      if (result && !result.ok) {
+        throw new Error(result.message || '执行失败');
+      }
       await load();
     } catch (err) {
       console.error('Manual publish failed:', err);
@@ -458,57 +461,62 @@ export function QueuePage() {
           <p className="tw-text-slate-400 tw-text-sm tw-mt-1">管理并监控全平台自动化发布任务</p>
         </div>
         <div className="tw-flex tw-items-center tw-gap-3">
-          {/* Scheduler Controls */}
-          <div className="tw-bg-white tw-border tw-border-slate-100 tw-rounded-[24px] tw-p-2 tw-pr-6 tw-flex tw-items-center tw-gap-4 tw-shadow-sm">
-             <div className="tw-flex tw-items-center tw-gap-3 tw-px-4 tw-py-2 tw-bg-slate-50 tw-rounded-2xl tw-border tw-border-slate-100">
-                <div className={`tw-w-2.5 tw-h-2.5 tw-rounded-full ${schedulerStatus?.running ? 'tw-bg-emerald-500 tw-animate-pulse' : 'tw-bg-slate-300'}`} />
-                <span className="tw-text-[11px] tw-font-black tw-text-slate-600 tw-uppercase tw-tracking-tight">
-                  {schedulerStatus?.running ? '引擎运行中' : '引擎已停止'}
-                </span>
+          {/* Status & Control Capsule */}
+          <div className="tw-bg-white tw-border tw-border-slate-100 tw-rounded-[24px] tw-p-1.5 tw-flex tw-items-center tw-gap-2 tw-shadow-sm">
+             <div className="tw-flex tw-items-center tw-gap-2.5 tw-px-4 tw-py-2">
+                <div className={`tw-w-2 tw-h-2 tw-rounded-full ${schedulerStatus?.running ? 'tw-bg-emerald-500 tw-animate-pulse tw-shadow-[0_0_8px_#10b981]' : 'tw-bg-slate-300'}`} />
+                <div className="tw-flex tw-flex-col tw-justify-center">
+                   <span className="tw-text-[9px] tw-text-slate-400 tw-font-bold tw-uppercase tw-tracking-widest">发布状态</span>
+                   <span className="tw-text-xs tw-font-black tw-text-slate-700">
+                     {schedulerStatus?.running ? '全自动发布中' : '自动发布已暂停'}
+                   </span>
+                </div>
              </div>
 
-             <div className="tw-flex tw-items-center tw-gap-1">
-                {!schedulerStatus?.running ? (
-                  <button 
-                    onClick={startWorker}
-                    className="tw-w-10 tw-h-10 tw-bg-emerald-50 tw-text-emerald-600 tw-rounded-xl tw-flex tw-items-center tw-justify-center hover:tw-bg-emerald-100 tw-transition-all active:tw-scale-95"
-                    title="启动引擎"
-                  >
-                    <Play size={18} fill="currentColor" />
-                  </button>
-                ) : (
-                  <button 
-                    onClick={stopWorker}
-                    className="tw-w-10 tw-h-10 tw-bg-red-50 tw-text-red-500 tw-rounded-xl tw-flex tw-items-center tw-justify-center hover:tw-bg-red-100 tw-transition-all active:tw-scale-95"
-                    title="停止引擎"
-                  >
-                    <Square size={18} fill="currentColor" />
-                  </button>
-                )}
-                <button 
-                  onClick={refreshScheduler}
-                  className="tw-w-10 tw-h-10 tw-bg-slate-50 tw-text-slate-400 tw-rounded-xl tw-flex tw-items-center tw-justify-center hover:tw-bg-slate-100 hover:tw-text-slate-600 tw-transition-all"
-                  title="刷新状态"
-                >
-                  <RefreshCcw size={18} />
-                </button>
-             </div>
+             <div className="tw-h-8 tw-w-[1px] tw-bg-slate-100 tw-mx-1" />
+
+             {!schedulerStatus?.running ? (
+               <button 
+                 onClick={startWorker}
+                 className="tw-flex tw-items-center tw-gap-2 tw-px-5 tw-py-2.5 tw-bg-emerald-500 tw-text-white tw-rounded-[18px] tw-text-xs tw-font-black tw-shadow-lg tw-shadow-emerald-500/20 hover:tw-bg-emerald-600 tw-transition-all active:tw-scale-95"
+               >
+                 <Play size={14} fill="currentColor" />
+                 启动发布
+               </button>
+             ) : (
+               <button 
+                 onClick={stopWorker}
+                 className="tw-flex tw-items-center tw-gap-2 tw-px-5 tw-py-2.5 tw-bg-rose-100 tw-text-rose-600 tw-rounded-[18px] tw-text-xs tw-font-black hover:tw-bg-rose-200 tw-transition-all active:tw-scale-95"
+               >
+                 <Square size={12} fill="currentColor" />
+                 暂停发布
+               </button>
+             )}
           </div>
 
+          <div className="tw-h-10 tw-w-[1px] tw-bg-slate-200 tw-mx-2" />
+
+          {/* Configuration */}
           <button 
-            onClick={() => { resetForm(); setShowForm(true); }}
-            className="tw-flex tw-items-center tw-gap-2 tw-px-6 tw-py-4 tw-bg-slate-900 tw-text-white tw-rounded-[24px] tw-text-sm tw-font-black tw-shadow-2xl tw-shadow-slate-200 hover:tw-bg-brand-600 tw-transition-all active:tw-scale-95"
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('workspace:open-settings'));
+              setTimeout(() => {
+                window.dispatchEvent(new CustomEvent('settings:open-content-tab'));
+              }, 50);
+            }}
+            className="tw-flex tw-items-center tw-gap-2 tw-px-5 tw-py-3.5 tw-bg-white tw-border tw-border-slate-200 tw-text-slate-600 tw-rounded-[20px] tw-text-xs tw-font-bold hover:tw-bg-brand-50 hover:tw-text-brand-600 hover:tw-border-brand-200 tw-transition-all active:tw-scale-95"
           >
-            <Plus size={18} />
-            部署新任务
+            <Settings size={16} />
+            排期策略
           </button>
 
+          {/* New Task */}
           <button 
-            onClick={() => setShowDispatchManager(true)}
-            className="tw-flex tw-items-center tw-justify-center tw-w-14 tw-h-14 tw-bg-white tw-border tw-border-slate-100 tw-text-slate-500 tw-rounded-[24px] tw-shadow-sm hover:tw-bg-slate-50 tw-transition-all active:tw-scale-95"
-            title="全局调度策略"
+            onClick={() => { resetForm(); setShowForm(true); }}
+            className="tw-flex tw-items-center tw-gap-2 tw-px-6 tw-py-3.5 tw-bg-slate-900 tw-text-white tw-rounded-[20px] tw-text-sm tw-font-black tw-shadow-xl tw-shadow-slate-200 hover:tw-bg-brand-600 tw-transition-all active:tw-scale-95"
           >
-            <Settings size={20} />
+            <Plus size={16} strokeWidth={3} />
+            手动增加调度任务
           </button>
         </div>
       </div>

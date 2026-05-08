@@ -239,7 +239,10 @@ function mapPublishRun(row: Record<string, unknown>): PublishRun {
 function readMediaPathsFromTask(content: ContentItem, task: DistributionTask): string[] {
   const payloadMedia = task.platformPayload.mediaPaths;
   if (Array.isArray(payloadMedia)) {
-    return payloadMedia.map(normalizePublishMediaPath).filter(Boolean);
+    return payloadMedia.map((item: any) => {
+      if (typeof item === 'string') return item;
+      return item?.path ?? item?.url ?? item?.filePath ?? '';
+    }).map(normalizePublishMediaPath).filter(Boolean);
   }
 
   return content.mediaJson
@@ -2505,6 +2508,14 @@ export async function createDatabase(filename: string) {
         if (!distributionTask) {
           throw new Error(`Hot bazi task ${id} could not be enqueued`);
         }
+        
+        // 修复：必须把 HotBaziTask 中的准确图片（字符串数组）带入发布负载，
+        // 否则后续自动发帖会丢失图片
+        const payload = distributionTask.platformPayload || {};
+        payload.mediaPaths = task.mediaPathsJson || [];
+        sqlite.prepare(`UPDATE distribution_tasks SET platformPayload = ? WHERE id = ?`).run(JSON.stringify(payload), distributionTask.id);
+        distributionTask.platformPayload = payload;
+
         sqlite.prepare(`
           UPDATE hot_bazi_tasks
           SET status = 'queued', updatedAt = ?

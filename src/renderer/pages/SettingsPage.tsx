@@ -93,6 +93,10 @@ export function SettingsPage() {
 
   useEffect(() => {
     void refresh();
+
+    const handleOpenContentTab = () => setActiveTab('content');
+    window.addEventListener('settings:open-content-tab', handleOpenContentTab);
+    return () => window.removeEventListener('settings:open-content-tab', handleOpenContentTab);
   }, []);
 
   // 当选择的 Workflow 改变时加载策略

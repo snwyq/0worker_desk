@@ -81,9 +81,14 @@ export function App() {
 
   useEffect(() => {
     const handleOpenHotPeople = () => openModule('hot-people');
+    const handleOpenSettings = () => openModule('settings');
+    
     window.addEventListener('workspace:open-hot-people', handleOpenHotPeople);
+    window.addEventListener('workspace:open-settings', handleOpenSettings);
+    
     return () => {
       window.removeEventListener('workspace:open-hot-people', handleOpenHotPeople);
+      window.removeEventListener('workspace:open-settings', handleOpenSettings);
     };
   }, []);
 

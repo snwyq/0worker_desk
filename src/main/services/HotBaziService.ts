@@ -24,9 +24,9 @@ function toSourceTopic(person: HotPerson) {
   return String(person.sourceTopicTitle || person.name || '').trim();
 }
 
-function getDefaultPromptTemplate() {
+export function getDefaultPromptTemplate() {
   return [
-    '请扮演一位铁口直断的高级八字命理专家，根据以下资料撰写一篇人物八字短评。',
+    '你是一位在微博拥有百万粉丝的铁口直断命理博主，风格犀利毒辣又不失专业。请根据以下资料，撰写一条微博热点八字短评。',
     '',
     '【输入资料】',
     '人物：{{personName}}',
@@ -35,26 +35,26 @@ function getDefaultPromptTemplate() {
     '大运：{{dayunInfo}}',
     '热点：{{sourceTopic}}',
     '',
-    '【全局要求】',
-    '行文风格：铁口直断，专业犀利，干脆利落，理据有据。',
-    '字数限制：总字数严格控制在300字以内，拒绝废话。',
-    '格式禁忌：除首行话题标签外，正文绝对禁止使用任何 Markdown 格式，仅保留自然换行。',
-    '内容导向：命理分析必须与该人物已知的真实经历、人生轨迹紧密咬合。',
-    '流年要求：当前要分析的流年年份是{{currentYear}}年（{{currentYearGanzhi}}），下一年是{{nextYear}}年（{{nextYearGanzhi}}），不要擅自改写成其他年份或干支。',
+    '【铁律（违反任何一条即为废稿）】',
+    '1. 去AI化：你是真人博主在发微博，不是AI在写报告。禁止出现"综上所述""总的来说""值得关注"等一切AI套话。除首行话题标签外禁止任何Markdown语法，全文纯文本。',
+    '2. 微博语感：句子要短，节奏要快，像跟粉丝聊天一样自然。可以用反问、感叹、断言，带点命理博主的毒舌范儿，让人忍不住想转发。',
+    '3. 强制分行：每个要求换行的地方必须输出真正的换行符，不许连成一坨。微博是手机阅读，一段超过三行就没人看了。',
+    '4. 真实经历优先：命理判断必须和这个人公开已知的真实经历严丝合缝地对上，经历描述的篇幅要多于命理术语。不确定的事情用模糊的运势描述替代，严禁编造。',
+    '5. 字数：全文控制在350字以内。',
     '',
-    '【严格文章结构】',
-    '第一行（独占一行）：#{{sourceTopic}}#',
+    '【文章结构（严格按顺序输出）】',
     '',
-    '第一段（约40字，格局定位）：必须以【命局提要】开头。首句直接写出“{{personName}}”的名字，随后简明给出其格局定性及五行喜忌分析。',
+    '第一行（独占一行）：#{{topicHashtag}}#',
     '',
-    '第二段（大运与真实经历对应，重点段落）：',
-    '要求：短句为主；真实经历的字数必须多于纯命理术语。',
-    '阶段一：必须以【大运复盘】开头。先写1句重点大运或年份的命理判断，紧接2到3句在该阶段真实的经历变化。',
-    '阶段二：必须换行另起，写1句下一个大运的命理判断，紧接2到3句对应的真实经历。',
+    '第1行：直接写"{{personName}}"的名字开头，且名字和后面的个人简介必须连在同一行（中间绝不许换行），用三四句短话快速勾勒这个人是谁、干了什么、凭什么火的。',
     '',
-    '第三段（综合论断）：必须以【核心断言】开头。直接点明这套八字对该人物在事业、家庭、健康上的实质性影响。',
+    '第2行：换行另起，固定句式起头："公开资料显示其生日是{{birthday}}，八字为{{sizhu}}。"紧接着用一两句话点出格局本质，带出命理定性。',
     '',
-    '第四段（流年推断）：必须以【近期流年】开头。推断{{currentYear}}年（{{currentYearGanzhi}}）和{{nextYear}}年（{{nextYearGanzhi}}）可能发生的具体事情。',
+    '第二段（大运复盘，每步大运独占一行）：',
+    '每一行的写法：先写大运干支和括号里的年份范围，紧跟命理四字短评，然后直接衔接这步大运里真实发生的代表性事件。各部分用逗号或句号自然连接，禁止用冒号和任何引导前缀词。',
+    '',
+    '第三段（流年推断，今年明年各占一行）：',
+    '第1行必须以"{{currentYear}}{{currentYearGanzhi}}年"起头，第2行必须以"{{nextYear}}{{nextYearGanzhi}}年"起头。先断命理气运，再推具体走向，语气要果断，像博主在铁口直断。',
   ].join('\n');
 }
 
@@ -63,12 +63,17 @@ function renderPromptTemplate(template: string, person: HotPerson) {
   const nextYear = currentYear + 1;
   const currentYearGanzhi = Solar.fromYmdHms(currentYear, 7, 1, 12, 0, 0).getLunar().getYearInGanZhi();
   const nextYearGanzhi = Solar.fromYmdHms(nextYear, 7, 1, 12, 0, 0).getLunar().getYearInGanZhi();
+
+  const sourceTopic = toSourceTopic(person) || '今日人物';
+  const topicHashtag = sourceTopic.length > 15 ? (person.name || sourceTopic) : sourceTopic;
+
   return template
     .replaceAll('{{personName}}', person.name || '')
     .replaceAll('{{birthday}}', person.verifyBirthday || person.birthday || '未知')
     .replaceAll('{{sizhu}}', person.sizhu || '未知')
     .replaceAll('{{dayunInfo}}', person.dayunInfo || '未知')
-    .replaceAll('{{sourceTopic}}', toSourceTopic(person) || '今日人物')
+    .replaceAll('{{sourceTopic}}', sourceTopic)
+    .replaceAll('{{topicHashtag}}', topicHashtag)
     .replaceAll('{{currentYear}}', String(currentYear))
     .replaceAll('{{currentYearGanzhi}}', currentYearGanzhi)
     .replaceAll('{{nextYear}}', String(nextYear))
@@ -150,15 +155,36 @@ export class HotBaziService {
       };
     }
 
-    // 2. 去重：按 (personId + topicTitle) 排除已生成的
+    // 2. 深度去重优化：防止同一个人因为不同热点被重复生成，导致霸屏
     const existingTasks = this.db.hotBaziTasks.list();
-    const existingKeys = new Set(
+    // 2.1 精确的话题去重（相同话题绝不重复）
+    const existingTopicKeys = new Set(
       existingTasks.map((t: any) => `${t.hotPersonId}::${t.sourceTopic}`)
+    );
+    // 2.2 全局人物去重（如果生成过这个人，就不再自动生成，除非手动勾选）
+    const existingPersonIds = new Set(
+      existingTasks.map((t: any) => t.hotPersonId)
     );
 
     let pendingPairs = allPairs.filter((pair: TopicPersonPair) => {
-      const key = `${pair.personId}::${pair.topicTitle}`;
-      return !existingKeys.has(key);
+      // 检查是否被用户在 UI 上手动强行勾选
+      const isExplicitlySelected = input.selectedPairs?.some(
+        p => p.personId === pair.personId && p.topicTitle === pair.topicTitle
+      );
+
+      const topicKey = `${pair.personId}::${pair.topicTitle}`;
+
+      // 规则 A：完全相同的话题（不论是否手动勾选），绝对不重复生成
+      if (existingTopicKeys.has(topicKey)) {
+        return false;
+      }
+
+      // 规则 B：如果没有在前端强制勾选，且这个人物曾经已经生成过八字任务了，则直接跳过
+      if (!isExplicitlySelected && existingPersonIds.has(pair.personId)) {
+        return false;
+      }
+
+      return true;
     });
 
     // 3. 同一人物限制最多 1 条（取热度最高的，已按热度排序所以直接计数）
@@ -245,7 +271,7 @@ export class HotBaziService {
         }
 
         // 核心修复：先安全剥离首部的 #话题名# 标签
-        const cleanBody = body.replace(/^#.*?#\s*/, ''); 
+        const cleanBody = body.replace(/^#.*?#\s*/, '');
         const paragraphs = cleanBody.split(/\r?\n|\\n/).map(p => p.trim()).filter(p => p.length > 0);
         const chartAnalysis = paragraphs[0] || '命理格局提取失败';
         const luckAnalysis = paragraphs[paragraphs.length - 1] || '流年断语提取失败';

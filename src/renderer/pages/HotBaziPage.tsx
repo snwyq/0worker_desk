@@ -62,38 +62,7 @@ function readRunState(): HotBaziRunState {
   }
 }
 
-const defaultPromptTemplate = [
-  '请扮演一位拥有二十年实战经验、铁口直断的高级命理师。请根据以下资料，撰写一篇用词犀利、极具宿命感的人物八字短评。',
-  '',
-  '【输入资料】',
-  '人物：{{personName}}',
-  '生日：{{birthday}}',
-  '八字：{{sizhu}}',
-  '大运：{{dayunInfo}}',
-  '话题标签：{{sourceTopic}}',
-  '',
-  '【全局铁律】',
-  '1. 独立论命，绝不迎合：正文完全独立进行命理推断与运势分析，【绝对禁止】在正文中生搬硬套、牵强附会地去解释“话题标签”的内容。保持命理师的高冷与客观。',
-  '2. 禁绝幻觉：必须结合该人物已知的真实经历。如果对部分经历不确定，请用宏观的运势起伏（如“必生波折”、“得贵人提携”）来替代，严禁凭空捏造未曾发生的具体事件。',
-  '3. 行文风格：一针见血，干脆利落。多用带有宿命感的短句与四字词（如：水大木漂、岁运并临、贪财坏印等），带出专业压迫感。',
-  '4. 格式与字数：总字数严格控制在300字以内，拒绝废话。除首行话题标签外，正文绝对禁止使用任何 Markdown 格式（如加粗、星号等），仅保留自然换行。',
-  '5. 严守流年：当前流年为{{currentYear}}年（{{currentYearGanzhi}}），下一年为{{nextYear}}年（{{nextYearGanzhi}}），禁止篡改。',
-  '',
-  '【严密的文章结构】',
-  '第一行（独占一行）：#{{sourceTopic}}#',
-  '',
-  '第一段（定调与格局，约70字）：必须以【命局提要】开头。首句必须直呼“{{personName}}”其名，然后一两句话写这个人的重要的年份和经历简介，接着写出“公开资料显示其生日是{{birthday}}，八字为{{sizhu}}”，然后用一句话下定论（如“这是典型的xx之命”），接着简练点出其八字核心格局及最致命的喜忌。',
-  '',
-  '第二段（约150字，大运复盘，流年分析，必须分层写，一句一行，大运或年份起头）：',
-  '要求：短句为主，真实经历的字数必须多于命理分析。',
-  '阶段一：必须以【大运复盘】开头。先写1句重点大运或年份的干支作用，紧接其在该阶段真实的经历变化。',
-  '阶段二：换行另起，写1句下一步大运的命理判断，紧接对应的真实境遇变化。',
-  '如果有更多关键阶段，继续换行另起增加内容，保持相同格式。',
-  '',
-  '第三段（综合论断与流年推断今年和明年的情况，也是一句一行，年份起头）：',
-  '必须以【近期流年】开头。专业评析流年的干支与本命局以及大运干支在这两年对其事业、感情或健康或重要事件的可能性事件与影响。',
-  '最后，直接断定{{currentYear}}年（{{currentYearGanzhi}}）与{{nextYear}}年（{{nextYearGanzhi}}）的流年走势，并直言预测这两年最明显的运势特点。',
-].join('\n');
+// 默认提示词从后端获取（Single Source of Truth），不再在前端写死
 
 export function HotBaziPage() {
   const storedConfig = readStoredHotBaziConfig();
@@ -119,7 +88,8 @@ export function HotBaziPage() {
   const [batchSize, setBatchSize] = useState(storedConfig.batchSize ?? '2');
   const [workflowCode, setWorkflowCode] = useState(storedConfig.workflowCode ?? '');
   const [mediaDir, setMediaDir] = useState(storedConfig.mediaDir ?? '');
-  const [promptTemplate, setPromptTemplate] = useState(storedConfig.promptTemplate || defaultPromptTemplate);
+  const [promptTemplate, setPromptTemplate] = useState(storedConfig.promptTemplate || '');
+  const [defaultPrompt, setDefaultPrompt] = useState('');
   const [runState, setRunState] = useState<HotBaziRunState>(() => readRunState());
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -230,7 +200,15 @@ export function HotBaziPage() {
 
   useEffect(() => {
     void load();
+    // 从后端拉取默认提示词（唯一真相源），用于「恢复默认」和首次无缓存时的回填
+    appApi.ai.getHotBaziDefaultPrompt().then(prompt => {
+      setDefaultPrompt(prompt);
+      if (!storedConfig.promptTemplate) {
+        setPromptTemplate(prompt);
+      }
+    }).catch(console.error);
   }, []);
+
 
   // Pipeline 完成后自动刷新页面数据
   useEffect(() => {
@@ -1082,7 +1060,7 @@ export function HotBaziPage() {
             <div className="tw-mb-4 tw-flex tw-items-center tw-justify-between tw-gap-3">
               <h3 className="tw-text-lg tw-font-black tw-text-slate-900">提示词</h3>
               <div className="tw-flex tw-gap-2">
-                <button type="button" onClick={() => setPromptTemplate(defaultPromptTemplate)} className="tw-inline-flex tw-h-10 tw-items-center tw-rounded-xl tw-border tw-border-slate-200 tw-bg-white tw-px-3 tw-text-xs tw-font-bold tw-text-slate-600">恢复默认</button>
+                <button type="button" onClick={() => { if (defaultPrompt) setPromptTemplate(defaultPrompt); }} disabled={!defaultPrompt} className="tw-inline-flex tw-h-10 tw-items-center tw-rounded-xl tw-border tw-border-slate-200 tw-bg-white tw-px-3 tw-text-xs tw-font-bold tw-text-slate-600">恢复默认</button>
                 <button type="button" onClick={() => setShowPromptModal(false)} className="tw-inline-flex tw-h-10 tw-items-center tw-rounded-xl tw-border tw-border-slate-200 tw-bg-white tw-px-3 tw-text-xs tw-font-bold tw-text-slate-600">关闭</button>
               </div>
             </div>
