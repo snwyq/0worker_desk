@@ -358,4 +358,24 @@ CREATE TABLE IF NOT EXISTS source_columns (
 );
 
 CREATE INDEX IF NOT EXISTS idx_source_columns_sort ON source_columns(sortIndex);
+
+CREATE TABLE IF NOT EXISTS face_palm_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contentId INTEGER NOT NULL,
+  accountId INTEGER NOT NULL,
+  platform TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'face', 
+  scheduledAt TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  mediaPathsJson TEXT NOT NULL DEFAULT '[]',
+  platformPayload TEXT NOT NULL DEFAULT '{}',
+  lastError TEXT NOT NULL DEFAULT '',
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (contentId) REFERENCES content_items(id),
+  FOREIGN KEY (accountId) REFERENCES accounts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_face_palm_tasks_scheduled ON face_palm_tasks(scheduledAt, status);
+CREATE INDEX IF NOT EXISTS idx_face_palm_tasks_account_status ON face_palm_tasks(accountId, status);
 `;

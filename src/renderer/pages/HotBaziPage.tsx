@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, ChevronLeft, ChevronRight, Copy, Flame, FolderOpen, Image as ImageIcon, Loader2, Pencil, Send, Settings2, Sparkles, Trash2, X } from 'lucide-react';
+import { CalendarClock, ChevronLeft, ChevronRight, Copy, Flame, FolderOpen, Image as ImageIcon, Loader2, Pencil, Send, Settings2, Sparkles, Trash2, Video, X } from 'lucide-react';
 import { appApi } from '../api';
 import { useHotBaziPipeline } from '../hooks/useHotBaziPipeline';
 import type { Account, HotBaziTask, HotPerson, AiWorkflow, TopicPersonPair } from '../../shared/types';
@@ -99,7 +99,8 @@ export function HotBaziPage() {
   const [isSavingTaskId, setIsSavingTaskId] = useState<number | null>(null);
   const [isDeletingTaskId, setIsDeletingTaskId] = useState<number | null>(null);
   const [isEnqueueingTaskId, setIsEnqueueingTaskId] = useState<number | null>(null);
-  const [batchWorkingType, setBatchWorkingType] = useState<'enqueue' | 'delete' | 'regenerate' | null>(null);
+  const [batchWorkingType, setBatchWorkingType] = useState<'enqueue' | 'delete' | 'regenerate' | 'video' | null>(null);
+  const [videoGeneratingTaskId, setVideoGeneratingTaskId] = useState<number | null>(null);
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [configDraft, setConfigDraft] = useState({
@@ -795,9 +796,10 @@ export function HotBaziPage() {
             <div className="tw-flex tw-flex-col tw-gap-5 tw-w-full tw-animate-in tw-fade-in tw-duration-300">
               {visibleTasks.map((task, index) => {
                 const payloadContent = taskContentPreview(task);
-                const imageExts = ['png', 'jpg', 'jpeg', 'webp'];
+                const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
                 const imagePaths = task.mediaPathsJson.filter((p) => imageExts.includes(p.split('.').pop()?.toLowerCase() || ''));
-                const nonImagePaths = task.mediaPathsJson.filter((p) => !imageExts.includes(p.split('.').pop()?.toLowerCase() || ''));
+                const videoPaths = task.mediaPathsJson.filter((p) => p.endsWith('.mp4'));
+                const otherPaths = task.mediaPathsJson.filter((p) => !imageExts.includes(p.split('.').pop()?.toLowerCase() || '') && !p.endsWith('.mp4'));
 
                 return (
                   <div key={task.id} className="tw-group tw-flex tw-flex-col tw-rounded-[1.25rem] tw-border tw-border-slate-200 tw-bg-white hover:tw-border-slate-300 hover:tw-shadow-md tw-transition-all tw-duration-300">
@@ -884,11 +886,30 @@ export function HotBaziPage() {
                               })}
                             </div>
                           )}
+
+                          {/* 视频文件 */}
+                          {videoPaths.length > 0 && (
+                            <div className="tw-mt-3 tw-flex tw-flex-col tw-gap-2">
+                              {videoPaths.map((p) => {
+                                const safeFileUrl = 'file:///' + p.replace(/\\/g, '/').split('/').map(seg => seg.match(/^[a-zA-Z]:$/) ? seg : encodeURIComponent(seg)).join('/');
+                                return (
+                                  <div key={p} className="tw-relative tw-w-[240px] tw-rounded-xl tw-overflow-hidden tw-border tw-border-slate-200 tw-bg-black tw-shadow-sm">
+                                    <video 
+                                      src={safeFileUrl} 
+                                      controls 
+                                      className="tw-w-full tw-h-auto"
+                                      preload="metadata"
+                                    />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                           
-                          {/* Non-image files */}
-                          {nonImagePaths.length > 0 && (
+                          {/* Non-image/Non-video files */}
+                          {otherPaths.length > 0 && (
                             <div className="tw-mt-3 tw-flex tw-flex-wrap tw-gap-2">
-                              {nonImagePaths.map(p => (
+                              {otherPaths.map(p => (
                                 <div key={p} className="tw-flex tw-items-center tw-px-3 tw-py-1.5 tw-rounded-lg tw-bg-slate-50 tw-border tw-border-slate-200 tw-text-[12px] tw-font-bold tw-text-slate-500 tw-max-w-[200px] tw-truncate" title={p}>
                                   <FolderOpen size={14} className="tw-mr-1.5 tw-shrink-0" />
                                   {p.split(/[\\/]/).pop()}
@@ -937,6 +958,27 @@ export function HotBaziPage() {
                         className="tw-flex-1 tw-flex tw-items-center tw-justify-center tw-gap-1.5 tw-py-3 tw-text-[13px] tw-font-bold tw-text-slate-500 hover:tw-text-blue-600 hover:tw-bg-slate-100 tw-transition-colors"
                       >
                         {copiedTaskId === task.id ? <Copy size={14} className="tw-text-emerald-500" /> : <Copy size={14} />} {copiedTaskId === task.id ? '已复制' : '复制'}
+                      </button>
+                      <div className="tw-w-px tw-h-4 tw-bg-slate-200"></div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const hasVideo = (task.mediaPathsJson || []).some((p: string) => p.endsWith('.mp4'));
+                          if (hasVideo) { setNotice('该任务已有视频。'); return; }
+                          setVideoGeneratingTaskId(task.id);
+                          appApi.ai.generateHotBaziVideo(task.id)
+                            .then((result: any) => {
+                              if (result?.ok) { setNotice(`✅ 视频已生成 (${result.durationSec}秒)`); return load(); }
+                              else setError(result?.error || '视频生成失败');
+                            })
+                            .catch((e: any) => setError(e instanceof Error ? e.message : String(e)))
+                            .finally(() => setVideoGeneratingTaskId(null));
+                        }}
+                        disabled={videoGeneratingTaskId === task.id}
+                        className="tw-flex-1 tw-flex tw-items-center tw-justify-center tw-gap-1.5 tw-py-3 tw-text-[13px] tw-font-bold tw-text-slate-500 hover:tw-text-amber-600 hover:tw-bg-slate-100 disabled:tw-opacity-50 tw-transition-colors"
+                      >
+                        {videoGeneratingTaskId === task.id ? <Loader2 size={14} className="tw-animate-spin" /> : <Video size={14} />} {videoGeneratingTaskId === task.id ? '生成中...' : '🎬视频'}
                       </button>
                       <div className="tw-w-px tw-h-4 tw-bg-slate-200"></div>
 

@@ -452,11 +452,6 @@ export interface AiGenerateOptions {
   maxTokens?: number;
 }
 
-export interface AiImageOptions {
-  prompt: string;
-  size?: string;
-}
-
 export interface AiResponse {
   content: string;
   usage?: any;
@@ -612,6 +607,60 @@ export interface HotBaziProgressEvent {
   personName: string;
   topicTitle: string;
   ok: boolean;
-  error?: string;
   status?: string;
+  error?: string;
 }
+
+export type FacePalmCategory = 'face' | 'palm';
+
+export interface FacePalmTask {
+  id: number;
+  contentId: number;
+  accountId: number;
+  platform: PlatformCode;
+  category: FacePalmCategory;
+  scheduledAt: string;
+  status: HotBaziScheduleStatus;
+  mediaPathsJson: string[];
+  platformPayload: Record<string, unknown>;
+  lastError: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateFacePalmTaskInput {
+  contentId: number;
+  accountId: number;
+  platform: PlatformCode;
+  category: FacePalmCategory;
+  scheduledAt: string;
+  status: HotBaziScheduleStatus;
+  mediaPathsJson?: string[];
+  platformPayload?: Record<string, unknown>;
+}
+
+export interface UpdateFacePalmTaskInput {
+  scheduledAt?: string;
+  status?: HotBaziScheduleStatus;
+  mediaPathsJson?: string[];
+  platformPayload?: Record<string, unknown>;
+}
+
+export interface GenerateFacePalmBatchInput {
+  accountId: number;
+  category: FacePalmCategory;
+  batchSize: number;
+  promptTemplate?: string;
+  model?: 'qwen3.5-plus' | 'deepseek-v3.2' | 'kimi-k2.5';
+  mediaDir?: string;
+  workflowCode?: string;
+}
+
+export interface GenerateFacePalmBatchResult {
+  createdContents: number;
+  createdTasks: number;
+  taskIds: number[];
+  contentIds: number[];
+  errors: string[];
+}
+

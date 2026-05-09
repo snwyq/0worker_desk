@@ -1,4 +1,4 @@
-import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AiWorkflowRun, AnalyzeHotPeopleInput, AnalyzeHotPeopleResult, AppSetting, ConnectionTestResult, ContentItem, ContentVersion, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DispatchSimulationEntry, DistributionTask, GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotBaziTask, HotPerson, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, SourceColumn, TopicPersonPair, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput, PublishingStrategy, CreatePublishingStrategyInput, UpdatePublishingStrategyInput } from '../shared/types';
+import type { Account, AiGenerateOptions, AiPlugin, AiResponse, AiWorkflow, AiWorkflowRun, AnalyzeHotPeopleInput, AnalyzeHotPeopleResult, AppSetting, ConnectionTestResult, ContentItem, ContentVersion, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreateFacePalmTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DispatchSimulationEntry, DistributionTask, GenerateHotBaziBatchInput, GenerateFacePalmBatchInput, GenerateHotBaziBatchResult, GenerateFacePalmBatchResult, HotBaziTask, FacePalmTask, FacePalmCategory, HotPerson, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, SourceColumn, TopicPersonPair, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput, UpdateFacePalmTaskInput, PublishingStrategy, CreatePublishingStrategyInput, UpdatePublishingStrategyInput } from '../shared/types';
 
 
 const httpBaseUrl = 'http://127.0.0.1:5183';
@@ -447,6 +447,41 @@ export const appApi = {
       });
     },
   },
+  facePalmTasks: {
+    list: (): Promise<FacePalmTask[]> => {
+      if (window.weiboPublisher?.facePalmTasks) {
+        return window.weiboPublisher.facePalmTasks.list();
+      }
+      return httpJson<FacePalmTask[]>('/face-palm-tasks');
+    },
+    deleteMany: (ids: number[]): Promise<{ deleted: number }> => {
+      if (window.weiboPublisher?.facePalmTasks?.deleteMany) {
+        return window.weiboPublisher.facePalmTasks.deleteMany(ids);
+      }
+      return httpJson<{ deleted: number }>('/face-palm-tasks/delete-many', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      });
+    },
+    enqueue: (id: number): Promise<DistributionTask> => {
+      if (window.weiboPublisher?.facePalmTasks?.enqueue) {
+        return window.weiboPublisher.facePalmTasks.enqueue(id);
+      }
+      return httpJson<DistributionTask>('/face-palm-tasks/enqueue', {
+        method: 'POST',
+        body: JSON.stringify({ id }),
+      });
+    },
+    enqueueMany: (ids: number[]): Promise<DistributionTask[]> => {
+      if (window.weiboPublisher?.facePalmTasks?.enqueueMany) {
+        return window.weiboPublisher.facePalmTasks.enqueueMany(ids);
+      }
+      return httpJson<DistributionTask[]>('/face-palm-tasks/enqueue-many', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      });
+    },
+  },
   publishRuns: {
     list: (taskId?: number): Promise<PublishRun[]> => {
       if (window.weiboPublisher?.publishRuns) {
@@ -491,15 +526,6 @@ export const appApi = {
         return window.weiboPublisher.ai.generate(options);
       }
       return httpJson<AiResponse>('/ai/generate', {
-        method: 'POST',
-        body: JSON.stringify(options),
-      });
-    },
-    generateImage: (options: AiImageOptions): Promise<{ url: string }> => {
-      if (window.weiboPublisher?.ai) {
-        return window.weiboPublisher.ai.generateImage(options);
-      }
-      return httpJson<{ url: string }>('/ai/generate-image', {
         method: 'POST',
         body: JSON.stringify(options),
       });
@@ -669,6 +695,32 @@ export const appApi = {
       }
       const result = await httpJson<{ prompt: string }>('/ai/hot-bazi/default-prompt');
       return result.prompt;
+    },
+    generateFacePalmBatch: async (input: GenerateFacePalmBatchInput): Promise<GenerateFacePalmBatchResult> => {
+      if (window.weiboPublisher?.ai?.generateFacePalmBatch) {
+        return window.weiboPublisher.ai.generateFacePalmBatch(input);
+      }
+      return httpJson<GenerateFacePalmBatchResult>('/ai/face-palm/generate-batch', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+    getFacePalmDefaultPrompt: async (category: FacePalmCategory): Promise<string> => {
+      if (window.weiboPublisher?.ai?.getFacePalmDefaultPrompt) {
+        const result = await window.weiboPublisher.ai.getFacePalmDefaultPrompt(category);
+        return result.prompt;
+      }
+      const result = await httpJson<{ prompt: string }>(`/ai/face-palm/default-prompt?category=${category}`);
+      return result.prompt;
+    },
+    generateHotBaziVideo: async (taskId: number): Promise<{ ok: boolean; videoPath?: string; durationSec?: number; error?: string }> => {
+      if (window.weiboPublisher?.ai?.generateHotBaziVideo) {
+        return window.weiboPublisher.ai.generateHotBaziVideo(taskId);
+      }
+      return httpJson<{ ok: boolean; videoPath?: string; durationSec?: number; error?: string }>('/ai/hot-bazi/generate-video', {
+        method: 'POST',
+        body: JSON.stringify({ taskId }),
+      });
     },
     previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any): Promise<{ runId: string }> => {
       if (window.weiboPublisher?.ai) {

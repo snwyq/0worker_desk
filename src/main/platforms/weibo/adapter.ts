@@ -8,7 +8,7 @@ export const weiboAdapter: PlatformAdapter = {
   capabilities: {
     text: true,
     images: true,
-    video: false,
+    video: true,
     richText: false,
     scheduledPublish: true,
     manualHandoff: true,

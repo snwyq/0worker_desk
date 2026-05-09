@@ -129,6 +129,86 @@ export class LocalChartRenderer {
       });
     });
   }
+
+  /** 渲染视频"黄金3秒"钩子帧截图 */
+  public async renderVideoHook(options: {
+    hookSentence: string;
+    personName: string;
+    topicTitle: string;
+    personPhoto: string | null;
+    outputDir: string;
+  }): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const win = new BrowserWindow({
+        show: false,
+        width: 1080,
+        height: 1920,
+        webPreferences: {
+          nodeIntegration: true,
+          contextIsolation: false,
+          webSecurity: false,
+        },
+      });
+
+      if (!fs.existsSync(options.outputDir)) {
+        fs.mkdirSync(options.outputDir, { recursive: true });
+      }
+
+      const failTimeout = setTimeout(() => {
+        if (!win.isDestroyed()) win.close();
+        reject(new Error('Video hook render timeout'));
+      }, 30000);
+
+      const loadUrl = process.env.VITE_DEV_SERVER_URL
+        ? `${process.env.VITE_DEV_SERVER_URL}#/export/video-hook`
+        : `file://${path.join(__dirname, '../renderer/index.html')}#/export/video-hook`;
+
+      win.loadURL(loadUrl);
+
+      win.webContents.on('did-finish-load', async () => {
+        // 向渲染进程注入数据
+        await win.webContents.executeJavaScript(`
+          (function() {
+            const payload = ${JSON.stringify(options)};
+            window.__VIDEO_HOOK_DATA__ = payload;
+            window.postMessage({ type: 'RENDER_VIDEO_HOOK', payload }, '*');
+          })();
+        `);
+
+        // 轮询等待渲染就绪
+        const checkReady = setInterval(async () => {
+          try {
+            const isReady = await win.webContents.executeJavaScript('window.__VIDEO_HOOK_READY__');
+            if (isReady) {
+              clearInterval(checkReady);
+              await captureHook();
+            }
+          } catch {
+            // 忽略早期执行错误
+          }
+        }, 200);
+
+        const captureHook = async () => {
+          try {
+            win.setSize(1080, 1920);
+            await new Promise(r => setTimeout(r, 200));
+            const image = await win.webContents.capturePage({ x: 0, y: 0, width: 1080, height: 1920 });
+            const buffer = image.toPNG();
+            const fileName = `video_hook_${options.personName}_${Date.now()}.png`;
+            const fullPath = path.join(options.outputDir, fileName);
+            fs.writeFileSync(fullPath, buffer);
+            if (!win.isDestroyed()) win.close();
+            clearTimeout(failTimeout);
+            resolve(fullPath);
+          } catch (err) {
+            if (!win.isDestroyed()) win.close();
+            clearTimeout(failTimeout);
+            reject(err);
+          }
+        };
+      });
+    });
+  }
 }
 
 export const localChartRenderer = new LocalChartRenderer();

@@ -1,6 +1,6 @@
 import electron from 'electron';
 import http from 'node:http';
-import type { AnalyzeHotPeopleInput, ConnectionTestResult, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreatePublishingStrategyInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, GenerateHotBaziBatchInput, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput } from '../../shared/types.js';
+import type { AnalyzeHotPeopleInput, ConnectionTestResult, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreateFacePalmTaskInput, CreatePostInput, CreatePublishingStrategyInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, GenerateHotBaziBatchInput, GenerateFacePalmBatchInput, PublishAttemptResult, UpdateAccountInput, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput, UpdateFacePalmTaskInput, FacePalmCategory } from '../../shared/types.js';
 import { fetchAdsPowerProfiles } from '../browser/AdsPowerApi.js';
 import { createConnectorForAccount } from '../browser/BrowserConnectorFactory.js';
 import type { AppDatabase } from '../db/database.js';
@@ -12,12 +12,13 @@ import { PublishScheduler } from '../publisher/Scheduler.js';
 import { WeiboPublisher } from '../publisher/WeiboPublisher.js';
 import { listPlatformCapabilities } from '../platforms/registry.js';
 import { checkForUpdates, readUpdateConfig } from '../updater/UpdateService.js';
-import { AiService, aiService, type AiGenerateOptions, type AiImageOptions } from '../services/AiService.js';
+import { AiService, aiService, type AiGenerateOptions } from '../services/AiService.js';
 import { hotBaziService, getDefaultPromptTemplate } from '../services/HotBaziService.js';
+import { facePalmService, getFacePalmDefaultPrompt } from '../services/FacePalmService.js';
 import { hotPeopleService } from '../services/HotPeopleService.js';
+import { videoExportService } from '../services/VideoExportService.js';
 import { getWorkflowEngine } from '../core/workflow/EngineRegistry.js';
 import { createWorkflowRunner } from '../core/workflow/EngineRegistry.js';
-import { ImageGenTool } from '../core/tools/ImageGenTool.js';
 import type { ITool } from '../core/tools/ITool.js';
 import type { WorkflowDefinition } from '../core/workflow/types.js';
 
@@ -328,6 +329,8 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   aiService.init(repositories);
   hotPeopleService.init(repositories);
   hotBaziService.init(repositories);
+  facePalmService.init(repositories);
+  videoExportService.init(repositories);
   ipcMain.handle('app:relaunch', () => relaunchApp());
 
   ipcMain.handle('accounts:list', () => repositories.accounts.list());
@@ -397,7 +400,6 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   ipcMain.handle('updates:check', () => checkForUpdates(repositories));
   ipcMain.handle('helpDocs:get', () => readHelpDocs(process.cwd()));
   ipcMain.handle('ai:generate', (_event, options: AiGenerateOptions) => aiService.generateText(options));
-  ipcMain.handle('ai:generateImage', (_event, options: AiImageOptions) => aiService.generateImage(options));
 
   // AI Orchestrator Handlers
   ipcMain.handle('ai:listPlugins', () => repositories.aiPlugins.list());
@@ -449,6 +451,29 @@ export function registerIpcHandlers(repositories: AppDatabase, scheduler: Publis
   });
   ipcMain.handle('ai:regenerateHotBaziMedia', (_event, taskIds: number[], mediaDir?: string) => hotBaziService.regenerateMediaForTasks(taskIds, mediaDir));
   ipcMain.handle('ai:getHotBaziDefaultPrompt', () => ({ prompt: getDefaultPromptTemplate() }));
+
+  ipcMain.handle('facePalmTasks:list', () => repositories.facePalmTasks.list());
+  ipcMain.handle('facePalmTasks:deleteMany', (_event, ids: number[]) => ({ deleted: repositories.facePalmTasks.deleteMany(ids) }));
+  ipcMain.handle('facePalmTasks:enqueue', (_event, id: number) => repositories.facePalmTasks.enqueueToDistribution(id));
+  ipcMain.handle('facePalmTasks:enqueueMany', (_event, ids: number[]) => repositories.facePalmTasks.enqueueManyToDistribution(ids));
+  
+  ipcMain.handle('ai:generateFacePalmBatch', (event, input: GenerateFacePalmBatchInput) => {
+    return facePalmService.generateBatch(input);
+  });
+  ipcMain.handle('ai:getFacePalmDefaultPrompt', (_event, category: FacePalmCategory) => ({ prompt: getFacePalmDefaultPrompt(category) }));
+
+
+  // 视频生成
+  ipcMain.handle('ai:generateHotBaziVideo', async (event, taskId: number) => {
+    return videoExportService.generateVideoForTask(taskId, (msg) => {
+      try { event.sender.send('hot-bazi:video-progress', { taskId, message: msg }); } catch { /* window may have closed */ }
+    });
+  });
+  ipcMain.handle('ai:generateHotBaziVideoBatch', async (event, taskIds: number[]) => {
+    return videoExportService.generateVideoForTasks(taskIds, (msg) => {
+      try { event.sender.send('hot-bazi:video-progress', { taskIds, message: msg }); } catch { /* window may have closed */ }
+    });
+  });
   ipcMain.handle('ai:startAgentSchedule', async (_event, accountId: number) => {
     // In production, this would register a node-cron job or an interval.
     return { ok: true, message: `Scheduled agent for account ${accountId}` };
@@ -558,7 +583,6 @@ async function handlePreviewWorkflow(event: any, repositories: AppDatabase, plug
         steps: [
           { id: 'step1', type: 'bazi_calc', birthDateKey: 'userBirth', outputKey: 'baziResult' },
           { id: 'step2', type: 'llm', prompt: '你是一个叫“猫小仙”的命理博主。请根据结果：{{state.baziResult.summary}} 写一条治愈系微博文案。', outputKey: 'finalContent' },
-          { id: 'step3', type: 'image_gen', prompt: '一张治愈系的插画，配合文字：{{state.finalContent}}', outputKey: 'imageUrl' }
         ]
       }
     };
@@ -881,6 +905,30 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
 
       const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
 
+      if (request.method === 'GET' && requestUrl.pathname === '/face-palm-tasks') {
+        sendJson(request, response, 200, repositories.facePalmTasks.list());
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/face-palm-tasks/delete-many') {
+        const input = await readBody(request) as { ids: number[] };
+        const result = repositories.facePalmTasks.deleteMany(input.ids);
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/face-palm-tasks/enqueue') {
+        const input = await readBody(request) as { id: number };
+        sendJson(request, response, 200, repositories.facePalmTasks.enqueueToDistribution(input.id));
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/face-palm-tasks/enqueue-many') {
+        const input = await readBody(request) as { ids: number[] };
+        sendJson(request, response, 200, repositories.facePalmTasks.enqueueManyToDistribution(input.ids));
+        return;
+      }
+
       if (request.method === 'GET' && requestUrl.pathname === '/publish-runs') {
         const taskId = requestUrl.searchParams.get('taskId');
         sendJson(request, response, 200, taskId ? repositories.publishRuns.listByTask(Number(taskId)) : repositories.publishRuns.list());
@@ -971,6 +1019,13 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
           input.comment ?? '',
           input.rewrittenBody,
         ));
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/ai/hot-bazi/generate-video') {
+        const input = await readBody(request) as { taskId: number };
+        const result = await videoExportService.generateVideoForTask(input.taskId);
+        sendJson(request, response, 200, result);
         return;
       }
 
@@ -1099,6 +1154,18 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
         return;
       }
 
+      if (request.method === 'GET' && requestUrl.pathname === '/ai/face-palm/default-prompt') {
+        const category = (requestUrl.searchParams.get('category') || 'face') as FacePalmCategory;
+        sendJson(request, response, 200, { prompt: getFacePalmDefaultPrompt(category) });
+        return;
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/ai/face-palm/generate-batch') {
+        const input = await readBody(request) as GenerateFacePalmBatchInput;
+        sendJson(request, response, 200, await facePalmService.generateBatch(input));
+        return;
+      }
+
       if (request.method === 'GET' && request.url === '/ai/plugins') {
         sendJson(request, response, 200, repositories.aiPlugins.list());
         return;
@@ -1134,12 +1201,6 @@ export function startHttpApi(repositories: AppDatabase, scheduler: PublishSchedu
       if (request.method === 'POST' && request.url === '/ai/generate') {
         const input = await readBody(request) as AiGenerateOptions;
         sendJson(request, response, 200, await httpAiService.generateText(input));
-        return;
-      }
-
-      if (request.method === 'POST' && request.url === '/ai/generate-image') {
-        const input = await readBody(request) as AiImageOptions;
-        sendJson(request, response, 200, { url: await httpAiService.generateImage(input) });
         return;
       }
 

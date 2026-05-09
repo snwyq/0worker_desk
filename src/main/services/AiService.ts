@@ -5,11 +5,6 @@ export interface AiGenerateOptions {
   maxTokens?: number;
 }
 
-export interface AiImageOptions {
-  prompt: string;
-  size?: string;
-}
-
 export interface AiResponse {
   content: string;
   usage?: any;
@@ -135,33 +130,6 @@ export class AiService {
       content: data.candidates[0].content.parts[0].text,
       usage: data.usageMetadata
     };
-  }
-
-  async generateImage(options: AiImageOptions): Promise<string> {
-    const key = this.apiyiKey;
-    safeLog(`[AI-DEBUG] Using APIYi Image Key: ${key ? (key.substring(0, 4) + '****') : 'MISSING'}, Length: ${key.length}`);
-
-    const url = `https://api.apiyi.com/v1/images/generations?key=${key}`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiyiKey}`
-      },
-      body: JSON.stringify({
-        model: 'dall-e-3',
-        prompt: options.prompt,
-        n: 1,
-        size: options.size || '1024x1024'
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`APIYi Image Error: ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    return data.data[0].url;
   }
 
   async fetchHotTopics(force = false): Promise<{ items: any[], lastFetchTime: string | null, sourceStatus?: Array<{ platform: string; ok: boolean; reason?: string; count?: number }>, insertedCount?: number }> {

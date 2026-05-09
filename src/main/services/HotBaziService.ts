@@ -36,17 +36,18 @@ export function getDefaultPromptTemplate() {
     '热点：{{sourceTopic}}',
     '',
     '【铁律（违反任何一条即为废稿）】',
-    '1. 去AI化：你是真人博主在发微博，不是AI在写报告。禁止出现"综上所述""总的来说""值得关注"等一切AI套话。除首行话题标签外禁止任何Markdown语法，全文纯文本。',
-    '2. 微博语感：句子要短，节奏要快，像跟粉丝聊天一样自然。可以用反问、感叹、断言，带点命理博主的毒舌范儿，让人忍不住想转发。',
-    '3. 强制分行：每个要求换行的地方必须输出真正的换行符，不许连成一坨。微博是手机阅读，一段超过三行就没人看了。',
-    '4. 真实经历优先：命理判断必须和这个人公开已知的真实经历严丝合缝地对上，经历描述的篇幅要多于命理术语。不确定的事情用模糊的运势描述替代，严禁编造。',
-    '5. 字数：全文控制在350字以内。',
+    '1. 绝对隐私保护：文案中【绝对不能】出现真实姓名！一律用"某位顶流"、"某位大佬"、"该命主"等代称。也尽量不要提及太过容易暴露身份的具体专用名词。',
+    '2. 去AI化：你是真人博主在发微博，不是AI在写报告。禁止出现"综上所述""总的来说""值得关注"等一切AI套话。除首行话题标签外禁止任何Markdown语法，全文纯文本。',
+    '3. 微博语感：句子要短，节奏要快，像跟粉丝聊天一样自然。可以用反问、感叹、断言，带点命理博主的毒舌范儿，让人忍不住想转发。',
+    '4. 强制分行：每个要求换行的地方必须输出真正的换行符，不许连成一坨。微博是手机阅读，一段超过三行就没人看了。',
+    '5. 真实经历优先：命理判断必须和这个人公开已知的真实经历严丝合缝地对上，经历描述的篇幅要多于命理术语。不确定的事情用模糊的运势描述替代，严禁编造。',
+    '6. 字数：全文控制在350字以内。',
     '',
     '【文章结构（严格按顺序输出）】',
     '',
     '第一行（独占一行）：#{{topicHashtag}}#',
     '',
-    '第1行：直接写"{{personName}}"的名字开头，且名字和后面的个人简介必须连在同一行（中间绝不许换行），用三四句短话快速勾勒这个人是谁、干了什么、凭什么火的。',
+    '第1行（黄金金句）：必须是一个极度吸引眼球、引人入胜的【疑问句】！绝对不能用第二人称"你"，绝对不能包含真名。这句将作为视频封面大字，必须一击毙命。请务必优先使用以下爆款词汇组合："底层逻辑"、"为什么"、"到底走错了哪一步"、"惊天暗局"、"谁能想到"、"逆风翻盘"、"跌落神坛"（例如："从万人追捧到跌落神坛，到底走错了哪一步运？"）。写完疑问句后，用两三句话快速勾勒此人的背景和争议点。',
     '',
     '第2行：换行另起，固定句式起头："公开资料显示其生日是{{birthday}}，八字为{{sizhu}}。"紧接着用一两句话点出格局本质，带出命理定性。',
     '',
@@ -226,8 +227,7 @@ export class HotBaziService {
       errors: [],
     };
 
-    // 6. SchedulingEngine 在循环外创建一次
-    const schedulingEngine = new SchedulingEngine(this.db);
+    // Scheduling Engine is no longer used here during draft generation
 
     for (let index = 0; index < pendingPairs.length; index += 1) {
       const pair = pendingPairs[index];
@@ -313,15 +313,13 @@ export class HotBaziService {
         result.createdContents += 1;
         result.contentIds.push(content.id);
 
-        const scheduledAt = schedulingEngine.allocateScheduledTime('maoxiaoxian.daily_hot_person');
-
         const task = this.db.hotBaziTasks.create({
           contentId: content.id,
           accountId: account.id,
           platform: account.platform,
           hotPersonId: person.id,
           sourceTopic: pair.topicTitle,
-          scheduledAt,
+          scheduledAt: '',
           status: 'draft',
           automationEnabled: false,
           intervalMinutes: 0,

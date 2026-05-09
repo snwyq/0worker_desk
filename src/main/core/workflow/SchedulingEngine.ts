@@ -98,10 +98,16 @@ export class SchedulingEngine {
         JOIN content_items ci ON ht.contentId = ci.id
         JOIN content_styles cs ON ci.styleId = cs.id AND ci.pluginCode = cs.pluginCode
         WHERE cs.workflowCode = ? AND ht.status NOT IN ('cancelled', 'failed')
+        UNION ALL
+        SELECT ft.scheduledAt 
+        FROM face_palm_tasks ft
+        JOIN content_items ci ON ft.contentId = ci.id
+        JOIN content_styles cs ON ci.styleId = cs.id AND ci.pluginCode = cs.pluginCode
+        WHERE cs.workflowCode = ? AND ft.status NOT IN ('cancelled', 'failed')
       )
       WHERE scheduledAt IS NOT NULL AND scheduledAt != ''
       ORDER BY scheduledAt DESC LIMIT 1
-    `)?.get(workflowCode, workflowCode) as { scheduledAt: string } | undefined;
+    `)?.get(workflowCode, workflowCode, workflowCode) as { scheduledAt: string } | undefined;
 
     return row?.scheduledAt || null;
   }
@@ -186,8 +192,16 @@ export class SchedulingEngine {
             WHERE cs.workflowCode = ? 
               AND ht.scheduledAt >= ? AND ht.scheduledAt <= ?
               AND ht.status NOT IN ('cancelled', 'failed')
+            UNION ALL
+            SELECT ft.scheduledAt 
+            FROM face_palm_tasks ft
+            JOIN content_items ci ON ft.contentId = ci.id
+            JOIN content_styles cs ON ci.styleId = cs.id AND ci.pluginCode = cs.pluginCode
+            WHERE cs.workflowCode = ? 
+              AND ft.scheduledAt >= ? AND ft.scheduledAt <= ?
+              AND ft.status NOT IN ('cancelled', 'failed')
           )
-        `).get(workflowCode, startOfDay, endOfDay, workflowCode, startOfDay, endOfDay) as { count: number } | undefined;
+        `).get(workflowCode, startOfDay, endOfDay, workflowCode, startOfDay, endOfDay, workflowCode, startOfDay, endOfDay) as { count: number } | undefined;
         
         const currentDayCount = countRow?.count || 0;
         console.log(`[SchedulingEngine] Quota check for ${startOfDay.split('T')[0]}: ${currentDayCount}/${strategy.maxDailyPosts}`);

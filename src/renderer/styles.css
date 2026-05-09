@@ -1,16 +1,16 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --bg-main: #f8fafc;
+  --bg-main: #f1f5f9; /* 加深大背景，与白色内容区形成对比 */
   --bg-sidebar: #ffffff;
-  --text-main: #1e293b;
-  --text-muted: #64748b;
-  --border-color: #e2e8f0;
-  --accent-color: #0e8de9;
+  --text-main: #0f172a;
+  --text-muted: #475569; /* 加深次要文字颜色，防止费眼 */
+  --border-color: #e2e8f0; /* 加深边框线颜色 */
+  --accent-color: #0f172a;
   
   --font-sans: "Outfit", "Inter", "system-ui", "sans-serif";
   --font-mono: "JetBrains Mono", "monospace";
@@ -19,24 +19,24 @@
   --brand-100: #f1f5f9;
   --brand-200: #e2e8f0;
   --brand-300: #cbd5e1;
-  --brand-400: #94a3b8;
-  --brand-500: #3b82f6; /* 专业蓝作为主色，替代黑色 */
-  --brand-600: #2563eb;
-  --brand-700: #1d4ed8;
-  --brand-accent: #3b82f6; 
+  --brand-400: #64748b;
+  --brand-500: #0f172a; 
+  --brand-600: #020617;
+  --brand-700: #000000;
+  --brand-accent: #0f172a; 
 }
 
-/* 高级柔和阴影 */
+/* 高级极简阴影 */
 .shadow-premium {
-  box-shadow: 0 1px 3px rgba(0,0,0,0.02), 0 10px 20px rgba(0,0,0,0.03);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.01), 0 4px 12px rgba(0,0,0,0.03);
 }
 
 .shadow-glass {
-  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+  box-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.04);
 }
 
 .border-subtle {
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.03);
 }
 
 body {
@@ -46,21 +46,23 @@ body {
   background-color: var(--bg-main);
   color: var(--text-main);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
+  letter-spacing: -0.01em;
 }
 
 /* 基础重置与全局类 */
 .glass-panel {
-  background: rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(0, 0, 0, 0.03);
 }
 
-/* 自定义滚动条 */
+/* 简约自定义滚动条 */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
@@ -68,12 +70,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 10px;
+  background: #e2e8f0;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #cbd5e1;
 }
 
 /* 动画定义 */
@@ -83,16 +85,16 @@ body {
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.3s ease-out forwards;
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 .animate-slide-up {
-  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 /* 清理旧的 IDE 样式残余 */

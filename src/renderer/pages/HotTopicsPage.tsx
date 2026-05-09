@@ -13,7 +13,7 @@ import {
   LayoutGrid,
 } from 'lucide-react';
 import { appApi } from '../api';
-import { AGENT_DRAFT_STORAGE_KEY, buildAgentDraftFromHotTopic } from '../../shared/agentDraft';
+
 
 type HotTopic = Record<string, any> & {
   createdAt?: string;
@@ -33,9 +33,7 @@ type HotTopic = Record<string, any> & {
   extra?: string;
 };
 
-type HotTopicsPageProps = {
-  onOpenAgent?: () => void;
-};
+type HotTopicsPageProps = {};
 
 type TopicColumn = {
   key: string;
@@ -66,7 +64,7 @@ function formatTopicPreview(value: unknown) {
   return text.length > 60 ? `${text.slice(0, 60)}...` : text;
 }
 
-export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
+export function HotTopicsPage({}: HotTopicsPageProps) {
   const { t } = useTranslation();
   const [hotTopics, setHotTopics] = useState<HotTopic[]>([]);
   const [lastFetchTime, setLastFetchTime] = useState<string | null>(null);
@@ -178,19 +176,7 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
   const cooldownHours = Math.floor(remainingCooldownMs / (60 * 60 * 1000));
   const cooldownMinutes = Math.ceil((remainingCooldownMs % (60 * 60 * 1000)) / (60 * 1000));
 
-  function useTopicForAgent(topic: HotTopic) {
-    const draft = buildAgentDraftFromHotTopic({
-      platform: topic.platform,
-      title: topic.title,
-      desc: topic.desc ?? topic.description,
-      url: topic.url,
-      mobileUrl: topic.mobilUrl ?? topic.mobileUrl,
-      rank: topic.rank,
-      hotValue: topic.hotValue ?? topic.hot_value ?? topic.heat,
-    });
-    window.localStorage.setItem(AGENT_DRAFT_STORAGE_KEY, JSON.stringify(draft));
-    onOpenAgent?.();
-  }
+
 
   return (
     <div className="tw-min-h-screen tw-bg-slate-50/30 tw-px-2 md:tw-px-6 tw-py-4 tw-animate-fade-in">
@@ -287,7 +273,7 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
             <thead className="tw-sticky tw-top-0 tw-z-30 tw-bg-white/95 tw-backdrop-blur-sm">
               <tr>
                 <th className="tw-w-16 tw-px-6 tw-py-4 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest tw-text-center">#</th>
-                <th className="tw-w-28 tw-px-4 tw-py-4 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest">操作</th>
+
                 {mirrorColumns.map(col => (
                   <th key={col.key} className="tw-px-4 tw-py-4 tw-text-[10px] tw-font-bold tw-text-slate-400 tw-uppercase tw-tracking-widest" style={{ width: col.width }}>
                     {col.label}
@@ -305,15 +291,7 @@ export function HotTopicsPage({ onOpenAgent }: HotTopicsPageProps) {
                     <td className="tw-px-6 tw-py-3 tw-text-xs tw-font-mono tw-font-bold tw-text-slate-300 group-hover:tw-text-brand-400 tw-text-center">
                       {String(idx + 1).padStart(2, '0')}
                     </td>
-                    <td className="tw-px-4 tw-py-3">
-                      <button
-                        onClick={() => useTopicForAgent(topic)}
-                        className="tw-flex tw-items-center tw-gap-2 tw-px-4 tw-py-1.5 tw-bg-white tw-border tw-border-slate-100 tw-rounded-lg tw-text-[11px] tw-font-bold tw-text-slate-600 hover:tw-border-brand-500 hover:tw-text-brand-500 tw-transition-all"
-                      >
-                        <Wand2 size={12} />
-                        生成
-                      </button>
-                    </td>
+
                     {mirrorColumns.map(col => {
                       const val = readTopicValue(topic, col.key);
                       const empty = !val;

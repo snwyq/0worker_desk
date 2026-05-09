@@ -33,12 +33,6 @@ export interface ImageSearchNode extends BaseWorkflowNode {
   outputKey: string;
 }
 
-export interface ImageGenNode extends BaseWorkflowNode {
-  type: 'image_gen';
-  prompt: string;
-  model: string;
-  outputKey: string;
-}
 
 export interface AssetManagerNode extends BaseWorkflowNode {
   type: 'asset_manager';
@@ -90,7 +84,6 @@ export type WorkflowNode =
   | LlmNode
   | SearchNode
   | ImageSearchNode
-  | ImageGenNode
   | AssetManagerNode
   | SafetyCheckNode
   | PersistNode

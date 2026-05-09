@@ -1,15 +1,16 @@
 export type WorkspaceModule =
   | 'home'
-  | 'ai-writer'
-  | 'agent-engine'
+
   | 'asset-factory'
   | 'accounts'
   | 'distribution'
   | 'hot-topics'
   | 'hot-people'
   | 'hot-bazi'
+  | 'face-palm'
   | 'settings'
-  | 'export-bazi-chart';
+  | 'export-bazi-chart'
+  | 'export-video-hook';
 
 export interface WorkspaceTab {
   id: string;
@@ -33,18 +34,7 @@ export const moduleTabs: Record<WorkspaceModule, WorkspaceTab> = {
     subtitle: '实时监控与核心策略调度',
     pinned: true,
   },
-  'ai-writer': {
-    id: 'ai-writer-tab',
-    module: 'ai-writer',
-    title: 'AI 智能创作',
-    subtitle: '基于大模型的文案生成与优化',
-  },
-  'agent-engine': {
-    id: 'agent-engine-tab',
-    module: 'agent-engine',
-    title: 'Agent 引擎',
-    subtitle: '自动化内容生产流水线编排',
-  },
+
   'asset-factory': {
     id: 'asset-factory-tab',
     module: 'asset-factory',
@@ -82,11 +72,29 @@ export const moduleTabs: Record<WorkspaceModule, WorkspaceTab> = {
     title: '热点八字',
     subtitle: '批量生成热点人物八字内容并进入审核与任务表',
   },
+  'face-palm': {
+    id: 'face-palm-tab',
+    module: 'face-palm',
+    title: '面相手相',
+    subtitle: '批量生成面相、手相科普内容',
+  },
   settings: {
     id: 'settings-engine',
     module: 'settings',
     title: '系统设置',
     subtitle: '偏好设置、网络环境与安全选项',
+  },
+  'export-bazi-chart': {
+    id: 'export-bazi-chart',
+    module: 'export-bazi-chart',
+    title: 'Bazi Export',
+    subtitle: '',
+  },
+  'export-video-hook': {
+    id: 'export-video-hook',
+    module: 'export-video-hook',
+    title: 'Video Hook',
+    subtitle: '',
   },
 };
 
@@ -98,6 +106,16 @@ export function createInitialWorkspace(): WorkspaceState {
       id: 'export-bazi-chart',
       module: 'export-bazi-chart',
       title: 'Bazi Export',
+      subtitle: '',
+      pinned: true,
+    };
+  }
+
+  if (typeof window !== 'undefined' && window.location.hash.includes('/export/video-hook')) {
+    initialTab = {
+      id: 'export-video-hook',
+      module: 'export-video-hook',
+      title: 'Video Hook',
       subtitle: '',
       pinned: true,
     };

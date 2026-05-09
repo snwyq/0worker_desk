@@ -1,4 +1,4 @@
-import type { Account, AiGenerateOptions, AiImageOptions, AiPlugin, AiResponse, AiWorkflow, AnalyzeHotPeopleInput, AnalyzeHotPeopleResult, AppSetting, ConnectionTestResult, ContentItem, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DispatchSimulationEntry, DistributionTask, GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotBaziTask, HotPerson, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, SourceColumn, TopicPersonPair, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput, PublishingStrategy, CreatePublishingStrategyInput, UpdatePublishingStrategyInput } from '../shared/types';
+import type { Account, AiGenerateOptions, AiPlugin, AiResponse, AiWorkflow, AnalyzeHotPeopleInput, AnalyzeHotPeopleResult, AppSetting, ConnectionTestResult, ContentItem, ContentStyle, CopyContentStyleInput, CreateAccountInput, CreateContentItemInput, CreateContentStyleInput, CreateDistributionTaskInput, CreateHotBaziTaskInput, CreatePostInput, CreateReviewItemInput, DeleteAccountResult, DeletePostResult, DispatchSimulationEntry, DistributionTask, GenerateHotBaziBatchInput, GenerateHotBaziBatchResult, HotBaziTask, HotPerson, Platform, PlatformCapabilities, Post, PublishAttemptResult, PublishNowResult, PublishRun, ReviewItem, SchedulerStatus, SourceColumn, TopicPersonPair, UpdateAccountInput, UpdateCheckResult, UpdateConfig, UpdateContentItemInput, UpdateContentStyleInput, UpdateDistributionTaskInput, UpdateHotBaziTaskInput, PublishingStrategy, CreatePublishingStrategyInput, UpdatePublishingStrategyInput } from '../shared/types';
 
 declare global {
   interface Window {
@@ -79,6 +79,12 @@ declare global {
         enqueue: (id: number) => Promise<DistributionTask>;
         enqueueMany: (ids: number[]) => Promise<DistributionTask[]>;
       };
+      facePalmTasks?: {
+        list: () => Promise<FacePalmTask[]>;
+        deleteMany: (ids: number[]) => Promise<{ deleted: number }>;
+        enqueue: (id: number) => Promise<DistributionTask>;
+        enqueueMany: (ids: number[]) => Promise<DistributionTask[]>;
+      };
       publishRuns: {
         list: (taskId?: number) => Promise<PublishRun[]>;
       };
@@ -94,7 +100,6 @@ declare global {
       };
       ai: {
         generate: (options: AiGenerateOptions) => Promise<AiResponse>;
-        generateImage: (options: AiImageOptions) => Promise<{ url: string }>;
         listPlugins: () => Promise<AiPlugin[]>;
         listStyles: (accountId: number, pluginCode?: string) => Promise<ContentStyle[]>;
         createStyle: (input: CreateContentStyleInput) => Promise<ContentStyle>;
@@ -118,10 +123,15 @@ declare global {
         resetHotPeopleAnalysis: () => Promise<{ deleted: number; reset: number }>;
         analyzeHotPeople: (input?: AnalyzeHotPeopleInput) => Promise<AnalyzeHotPeopleResult>;
         generateHotBaziBatch?: (input: GenerateHotBaziBatchInput) => Promise<GenerateHotBaziBatchResult>;
+        generateFacePalmBatch?: (input: GenerateFacePalmBatchInput) => Promise<GenerateFacePalmBatchResult>;
         regenerateHotBaziMedia?: (taskIds: number[], mediaDir?: string) => Promise<{ successCount: number; totalRequested: number }>;
         getHotBaziDefaultPrompt?: () => Promise<{ prompt: string }>;
+        getFacePalmDefaultPrompt?: (category: string) => Promise<{ prompt: string }>;
         listTodayTopicPeople?: () => Promise<TopicPersonPair[]>;
         onHotBaziProgress?: (callback: (event: any, data: any) => void) => (() => void);
+        generateHotBaziVideo?: (taskId: number) => Promise<{ ok: boolean; videoPath?: string; durationSec?: number; error?: string }>;
+        generateHotBaziVideoBatch?: (taskIds: number[]) => Promise<{ successCount: number; totalRequested: number; errors: string[] }>;
+        onHotBaziVideoProgress?: (callback: (event: any, data: any) => void) => (() => void);
         previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any) => Promise<{ runId: string }>;
         startAgentSchedule: (accountId: number) => Promise<{ ok: boolean; message: string }>;
         onWorkflowLog: (callback: (log: any) => void) => (() => void);

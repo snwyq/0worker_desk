@@ -80,6 +80,12 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
     enqueue: (id: number) => ipcRenderer.invoke('hotBaziTasks:enqueue', id),
     enqueueMany: (ids: number[]) => ipcRenderer.invoke('hotBaziTasks:enqueueMany', ids),
   },
+  facePalmTasks: {
+    list: () => ipcRenderer.invoke('facePalmTasks:list'),
+    deleteMany: (ids: number[]) => ipcRenderer.invoke('facePalmTasks:deleteMany', ids),
+    enqueue: (id: number) => ipcRenderer.invoke('facePalmTasks:enqueue', id),
+    enqueueMany: (ids: number[]) => ipcRenderer.invoke('facePalmTasks:enqueueMany', ids),
+  },
   publishRuns: {
     list: (taskId?: number) => ipcRenderer.invoke('publishRuns:list', taskId),
   },
@@ -115,10 +121,19 @@ contextBridge.exposeInMainWorld('weiboPublisher', {
     generateHotBaziBatch: (input: GenerateHotBaziBatchInput) => ipcRenderer.invoke('ai:generateHotBaziBatch', input),
     regenerateHotBaziMedia: (taskIds: number[], mediaDir?: string) => ipcRenderer.invoke('ai:regenerateHotBaziMedia', taskIds, mediaDir),
     listTodayTopicPeople: () => ipcRenderer.invoke('ai:listTodayTopicPeople'),
+    generateFacePalmBatch: (input: any) => ipcRenderer.invoke('ai:generateFacePalmBatch', input),
+    getFacePalmDefaultPrompt: (category: string) => ipcRenderer.invoke('ai:getFacePalmDefaultPrompt', category),
     onHotBaziProgress: (callback: any) => {
       const subscription = (_event: any, data: any) => callback(_event, data);
       ipcRenderer.on('hot-bazi:progress', subscription);
       return () => ipcRenderer.removeListener('hot-bazi:progress', subscription);
+    },
+    generateHotBaziVideo: (taskId: number) => ipcRenderer.invoke('ai:generateHotBaziVideo', taskId),
+    generateHotBaziVideoBatch: (taskIds: number[]) => ipcRenderer.invoke('ai:generateHotBaziVideoBatch', taskIds),
+    onHotBaziVideoProgress: (callback: any) => {
+      const subscription = (_event: any, data: any) => callback(_event, data);
+      ipcRenderer.on('hot-bazi:video-progress', subscription);
+      return () => ipcRenderer.removeListener('hot-bazi:video-progress', subscription);
     },
     previewWorkflow: (pluginCode: string, workflowCode: string, inputParams: any) => ipcRenderer.invoke('ai:previewWorkflow_v3', pluginCode, workflowCode, inputParams),
     startAgentSchedule: (accountId: number) => ipcRenderer.invoke('ai:startAgentSchedule', accountId),

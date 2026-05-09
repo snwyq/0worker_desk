@@ -43,6 +43,9 @@ import type {
   CreateHotBaziTaskInput,
   UpdateHotBaziTaskInput,
   TopicPersonPair,
+  CreateFacePalmTaskInput,
+  UpdateFacePalmTaskInput,
+  FacePalmTask,
 } from '../../shared/types.js';
 
 function now() {
@@ -347,6 +350,23 @@ function mapHotBaziTask(row: Record<string, unknown>): HotBaziTask {
   };
 }
 
+function mapFacePalmTask(row: Record<string, unknown>): FacePalmTask {
+  return {
+    id: Number(row.id),
+    contentId: Number(row.contentId),
+    accountId: Number(row.accountId),
+    platform: row.platform as FacePalmTask['platform'],
+    category: row.category as FacePalmTask['category'],
+    scheduledAt: String(row.scheduledAt),
+    status: row.status as FacePalmTask['status'],
+    mediaPathsJson: parseJsonArray<string>(row.mediaPathsJson),
+    platformPayload: parseJsonObject(row.platformPayload),
+    lastError: String(row.lastError ?? ''),
+    createdAt: String(row.createdAt),
+    updatedAt: String(row.updatedAt),
+  };
+}
+
 
 function mapPublicFigureEvidence(row: Record<string, unknown>) {
   return {
@@ -577,8 +597,7 @@ const maoxiaoxianWorkflowDefinition = {
   steps: [
     { id: 'step1', type: 'bazi_calc', birthDateKey: 'userBirth', outputKey: 'baziResult' },
     { id: 'step2', type: 'tophub_search', nodeId: 'KqndgxeLl9', outputKey: 'hotTopics' },
-    { id: 'step3', type: 'llm', prompt: '结合命理结果 {{state.baziResult.summary}} 和今日热点 {{state.hotTopics[0]}}，写一篇治愈系微博文案。', inputKey: 'none', outputKey: 'finalContent' },
-    { id: 'step4', type: 'image_gen', prompt: '一张充满意境的禅意背景图，适合微博配图', model: 'dall-e-3', outputKey: 'coverImage' },
+    { id: 'step3', type: 'llm', prompt: '结合命理结果 {{state.baziResult.summary}} 和今日热点 {{state.hotTopics[0]}}，写一篇治愈系微博文案。', inputKey: 'none', outputKey: 'finalContent' }
   ],
 };
 
@@ -2518,9 +2537,104 @@ export async function createDatabase(filename: string) {
 
         sqlite.prepare(`
           UPDATE hot_bazi_tasks
-          SET status = 'queued', updatedAt = ?
+          SET status = 'queued', scheduledAt = ?, updatedAt = ?
           WHERE id = ?
-        `).run(now(), id);
+        `).run(distributionTask.scheduledAt, now(), id);
+        return distributionTask;
+      },
+      enqueueManyToDistribution(ids: number[]): DistributionTask[] {
+        return ids.map((id) => this.enqueueToDistribution(id));
+      },
+    },
+    facePalmTasks: {
+      create(input: CreateFacePalmTaskInput): FacePalmTask {
+        const timestamp = now();
+        firstRow(sqlite.prepare('SELECT id FROM content_items WHERE id = ?').get(input.contentId));
+        firstRow(sqlite.prepare('SELECT id FROM accounts WHERE id = ?').get(input.accountId));
+        
+        const result = sqlite.prepare(`
+          INSERT INTO face_palm_tasks (
+            contentId, accountId, platform, category, scheduledAt, status,
+            mediaPathsJson, platformPayload, lastError, createdAt, updatedAt
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)
+        `).run(
+          input.contentId,
+          input.accountId,
+          input.platform,
+          input.category,
+          input.scheduledAt,
+          input.status,
+          JSON.stringify(input.mediaPathsJson ?? []),
+          JSON.stringify(input.platformPayload ?? {}),
+          timestamp,
+          timestamp,
+        );
+        return mapFacePalmTask(firstRow(sqlite.prepare('SELECT * FROM face_palm_tasks WHERE id = ?').get(result.lastInsertRowid)));
+      },
+      list(): FacePalmTask[] {
+        return select('SELECT * FROM face_palm_tasks ORDER BY scheduledAt DESC, id DESC').map(mapFacePalmTask);
+      },
+      listByAccount(accountId: number): FacePalmTask[] {
+        return select('SELECT * FROM face_palm_tasks WHERE accountId = ? ORDER BY scheduledAt DESC, id DESC', [accountId]).map(mapFacePalmTask);
+      },
+      findById(id: number): FacePalmTask | null {
+        const row = sqlite.prepare('SELECT * FROM face_palm_tasks WHERE id = ?').get(id);
+        return row ? mapFacePalmTask(row as Record<string, unknown>) : null;
+      },
+      update(id: number, input: UpdateFacePalmTaskInput): FacePalmTask {
+        const existing = this.findById(id);
+        if (!existing) {
+          throw new Error(`Face palm task ${id} was not found`);
+        }
+        const timestamp = now();
+        sqlite.prepare(`
+          UPDATE face_palm_tasks
+          SET scheduledAt = ?, status = ?, mediaPathsJson = ?, platformPayload = ?, updatedAt = ?
+          WHERE id = ?
+        `).run(
+          input.scheduledAt ?? existing.scheduledAt,
+          input.status ?? existing.status,
+          JSON.stringify(input.mediaPathsJson ?? existing.mediaPathsJson),
+          JSON.stringify(input.platformPayload ?? existing.platformPayload),
+          timestamp,
+          id,
+        );
+        return mapFacePalmTask(firstRow(sqlite.prepare('SELECT * FROM face_palm_tasks WHERE id = ?').get(id)));
+      },
+      delete(id: number): boolean {
+        sqlite.prepare('DELETE FROM face_palm_tasks WHERE id = ?').run(id);
+        return !this.findById(id);
+      },
+      deleteMany(ids: number[]): number {
+        const remove = sqlite.transaction((taskIds: number[]) => {
+          for (const id of taskIds) {
+            sqlite.prepare('DELETE FROM face_palm_tasks WHERE id = ?').run(id);
+          }
+        });
+        remove(ids);
+        return ids.length;
+      },
+      enqueueToDistribution(id: number): DistributionTask {
+        const task = this.findById(id);
+        if (!task) {
+          throw new Error(`Face palm task ${id} was not found`);
+        }
+        const distributionTask = enqueueContentForDispatch(task.contentId, 'face_palm_manual');
+        if (!distributionTask) {
+          throw new Error(`Face palm task ${id} could not be enqueued`);
+        }
+        
+        const payload = distributionTask.platformPayload || {};
+        payload.mediaPaths = task.mediaPathsJson || [];
+        sqlite.prepare(`UPDATE distribution_tasks SET platformPayload = ? WHERE id = ?`).run(JSON.stringify(payload), distributionTask.id);
+        distributionTask.platformPayload = payload;
+
+        sqlite.prepare(`
+          UPDATE face_palm_tasks
+          SET status = 'queued', scheduledAt = ?, updatedAt = ?
+          WHERE id = ?
+        `).run(distributionTask.scheduledAt, now(), id);
         return distributionTask;
       },
       enqueueManyToDistribution(ids: number[]): DistributionTask[] {
@@ -2830,6 +2944,17 @@ export interface AppDatabase {
     listByAccount(accountId: number): HotBaziTask[];
     findById(id: number): HotBaziTask | null;
     update(id: number, input: UpdateHotBaziTaskInput): HotBaziTask;
+    delete(id: number): boolean;
+    deleteMany(ids: number[]): number;
+    enqueueToDistribution(id: number): DistributionTask;
+    enqueueManyToDistribution(ids: number[]): DistributionTask[];
+  };
+  facePalmTasks: {
+    create(input: CreateFacePalmTaskInput): FacePalmTask;
+    list(): FacePalmTask[];
+    listByAccount(accountId: number): FacePalmTask[];
+    findById(id: number): FacePalmTask | null;
+    update(id: number, input: UpdateFacePalmTaskInput): FacePalmTask;
     delete(id: number): boolean;
     deleteMany(ids: number[]): number;
     enqueueToDistribution(id: number): DistributionTask;
